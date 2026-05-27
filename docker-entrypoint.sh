@@ -174,7 +174,6 @@ harakiri = 15
 max-requests = 5000
 vacuum = true
 die-on-term = true
-logto = /dev/stdout
 EOF
 
 # ============================================
