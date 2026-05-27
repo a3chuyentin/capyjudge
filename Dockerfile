@@ -28,13 +28,36 @@ COPY . .
 # Install Node dependencies
 RUN cd websocket && npm install qu ws simplesets
 
+# Tạo local_settings.py tạm cho compile assets
+RUN mkdir -p /app/dmoj && cat > /app/dmoj/local_settings.py << 'EOF'
+import os
+DEBUG = False
+SECRET_KEY = 'build-key'
+ALLOWED_HOSTS = ['*']
+DATABASES = {'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}}
+STATIC_ROOT = '/app/static'
+MEDIA_ROOT = '/app/media'
+DMOJ_PROBLEM_DATA_ROOT = '/problems'
+BRIDGED_JUDGE_ADDRESS = [('0.0.0.0', 9999)]
+BRIDGED_DJANGO_ADDRESS = [('localhost', 9998)]
+STATICFILES_FINDERS = [
+    'django.contrib.staticfiles.finders.FileSystemFinder',
+    'django.contrib.staticfiles.finders.AppDirectoriesFinder',
+]
+EOF
+
+# Compile assets
+RUN ./make_style.sh && \
+    python manage.py collectstatic --noinput && \
+    python manage.py compilemessages && \
+    python manage.py compilejsi18n
+
 # Copy entrypoint script
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# Create user for services
-RUN useradd -m -s /bin/bash www-data && \
-    chown -R www-data:www-data /app && \
+# Set permissions
+RUN chown -R www-data:www-data /app && \
     mkdir -p /app/static /app/media /problems /data && \
     chown -R www-data:www-data /app/static /app/media /problems /data
 
