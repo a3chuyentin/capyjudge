@@ -17,10 +17,14 @@ RUN npm install -g sass postcss-cli postcss autoprefixer
 
 # Copy requirements and install Python packages
 COPY requirements.txt .
+
+# Install pymysql and mysqlclient FIRST (before any Django commands)
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir pymysql && \
-    pip install --no-cache-dir mysqlclient && \
-    pip install --no-cache-dir uwsgi websocket-client && \
+    pip install --no-cache-dir mysqlclient
+
+# Then install remaining dependencies
+RUN pip install --no-cache-dir uwsgi websocket-client && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
@@ -30,14 +34,14 @@ COPY . .
 RUN python3 -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
-# Compile assets (run after all packages are installed)
+# Install Node dependencies for WebSocket (before compiling assets)
+RUN cd websocket && npm install qu ws simplesets
+
+# Compile assets (now pymysql and mysqlclient are available)
 RUN ./make_style.sh && \
     python manage.py collectstatic --noinput && \
     python manage.py compilemessages && \
     python manage.py compilejsi18n
-
-# Install Node dependencies for WebSocket
-RUN cd websocket && npm install qu ws simplesets
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /docker-entrypoint.sh
