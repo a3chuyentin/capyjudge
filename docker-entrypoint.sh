@@ -118,6 +118,7 @@ CACHES = {
 DMOJ_PROBLEM_DATA_ROOT = '/problems'
 STATIC_ROOT = '/app/static'
 MEDIA_ROOT = '/app/media'
+COMPRESS_ROOT = STATIC_ROOT
 
 # Bridge
 BRIDGED_JUDGE_ADDRESS = [('0.0.0.0', 9999)]
@@ -150,7 +151,7 @@ if os.environ.get('EMAIL_HOST'):
     EMAIL_HOST_USER = os.environ.get('EMAIL_USER', '')
     EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
     EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
-    DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@capyjudge.com')
+    DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'capyjudge@gmail.com')
 
 # Static files
 STATICFILES_FINDERS += ('compressor.finders.CompressorFinder',)
