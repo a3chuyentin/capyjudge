@@ -15,11 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Node.js tools
 RUN npm install -g sass postcss-cli postcss autoprefixer
 
-# Create virtual environment FIRST
-RUN python3 -m venv /venv
-ENV PATH="/venv/bin:$PATH"
-
-# Copy requirements and install packages INTO venv
+# Copy requirements và cài packages
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir PyMySQL mysqlclient && \
@@ -29,14 +25,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy source code
 COPY . .
 
-# Install Node dependencies for WebSocket
+# Install Node dependencies
 RUN cd websocket && npm install qu ws simplesets
-
-# Compile assets (now using venv python)
-RUN ./make_style.sh && \
-    python manage.py collectstatic --noinput && \
-    python manage.py compilemessages && \
-    python manage.py compilejsi18n
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /docker-entrypoint.sh

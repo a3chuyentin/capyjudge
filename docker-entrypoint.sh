@@ -118,7 +118,6 @@ CACHES = {
 DMOJ_PROBLEM_DATA_ROOT = '/problems'
 STATIC_ROOT = '/app/static'
 MEDIA_ROOT = '/app/media'
-COMPRESS_ROOT = STATIC_ROOT
 
 # Bridge
 BRIDGED_JUDGE_ADDRESS = [('0.0.0.0', 9999)]
@@ -157,10 +156,7 @@ if os.environ.get('EMAIL_HOST'):
 STATICFILES_FINDERS = [
     'django.contrib.staticfiles.finders.FileSystemFinder',
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
-    'compressor.finders.CompressorFinder',
 ]
-COMPRESS_ENABLED = not DEBUG
-COMPRESS_ROOT = STATIC_ROOT
 
 # Logging
 LOGGING = {
