@@ -277,6 +277,17 @@ stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 EOF
 
+cat > /etc/supervisor/conf.d/nginx.conf << 'EOF'
+[program:nginx]
+command=nginx -g "daemon off;"
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+EOF
+
 # ============================================
 # Generate websocket/config.js
 # ============================================
@@ -348,10 +359,9 @@ chmod -R 755 /app/static /app/media
 echo "All setup complete"
 
 # ============================================
-# Start services directly (without supervisor for nginx)
+# Start supervisor (which will start all services including nginx)
 # ============================================
-echo "Starting services..."
-nginx
+echo "Starting supervisor..."
 supervisord -c /etc/supervisor/supervisord.conf
 
 # Keep container running
