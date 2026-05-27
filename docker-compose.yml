@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  db:
+    image: mariadb:10.11
+    environment:
+      MARIADB_DATABASE: dmoj
+      MARIADB_USER: dmoj
+      MARIADB_PASSWORD: ${DB_PASSWORD:-dmoj_password_change_me}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password_change_me}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - capyjudge-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - capyjudge-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  websocket:
+    build: .
+    command: node websocket/daemon.js
+    environment:
+      EVENT_DAEMON_KEY: ${EVENT_DAEMON_KEY:-}
+    volumes:
+      - secrets_data:/data
+    networks:
+      - capyjudge-net
+    restart: unless-stopped
+
+  web:
+    build: .
+    ports:
+      - "${WEB_PORT:-8000}:80"
+      - "${BRIDGE_PORT:-9999}:9999"    # Expose bridge port for external judges
+    environment:
+      - DEBUG=${DEBUG:-False}
+      - SITE_DOMAIN=${SITE_DOMAIN:-localhost}
+      - SITE_NAME=${SITE_NAME:-CapyJudge}
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_NAME=dmoj
+      - DB_USER=dmoj
+      - DB_PASSWORD=${DB_PASSWORD:-}
+      - REDIS_URL=redis://redis:6379/0
+      - EVENT_DAEMON_URL=http://websocket:15100
+      - EVENT_DAEMON_KEY=${EVENT_DAEMON_KEY:-}
+      - CHAT_SECRET_KEY=${CHAT_SECRET_KEY:-}
+      - DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME:-}
+      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-}
+      - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:-}
+    volumes:
+      - static_data:/app/static
+      - media_data:/app/media
+      - problems_data:/problems
+      - secrets_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      websocket:
+        condition: service_started
+    networks:
+      - capyjudge-net
+    restart: unless-stopped
+
+  # Optional: Built-in judge (can be disabled if using external judges)
+  judge:
+    image: dmoj/judge:latest
+    environment:
+      JUDGE_NAME: ${JUDGE_NAME:-judge-0}
+      BRIDGE_HOST: web
+      BRIDGE_PORT: 9999
+    volumes:
+      - problems_data:/problems:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    privileged: true
+    depends_on:
+      - web
+    networks:
+      - capyjudge-net
+    restart: unless-stopped
+    profiles:
+      - with-judge  # Optional: only start with --profile with-judge
+
+networks:
+  capyjudge-net:
+    driver: bridge
+
+volumes:
+  mariadb_data:
+  static_data:
+  media_data:
+  problems_data:
+  secrets_data:
