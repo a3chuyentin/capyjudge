@@ -3,6 +3,7 @@ set -e
 
 # ============================================
 # CapyJudge All-in-One Installation Script
+# Based on LQDOJ/DMOJ architecture
 # ============================================
 
 # Configuration
@@ -81,13 +82,18 @@ create_env_file() {
 # ============================================
 # Ports configuration
 # ============================================
-WEB_PORT=${WEB_PORT:-8000}
+WEB_PORT=${WEB_PORT:-80}
 BRIDGE_PORT=${BRIDGE_PORT:-9999}
+WEBSOCKET_PORT=${WEBSOCKET_PORT:-15100}
 
 # ============================================
 # Database (required)
 # ============================================
+DB_NAME=${DB_NAME:-capyjudge}
+DB_USER=${DB_USER:-capyjudge}
 DB_PASSWORD=${DB_PASSWORD}
+DB_HOST=${DB_HOST:-localhost}
+DB_PORT=${DB_PORT:-3306}
 DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
 
 # ============================================
@@ -96,6 +102,8 @@ DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
 DEBUG=${DEBUG:-False}
 SITE_DOMAIN=${SITE_DOMAIN:-localhost}
 SITE_NAME=${SITE_NAME:-CapyJudge}
+SITE_LONG_NAME=${SITE_LONG_NAME:-CapyJudge Online Judge}
+SITE_ADMIN_EMAIL=${SITE_ADMIN_EMAIL:-admin@capyjudge.com}
 
 # ============================================
 # Superuser (optional - auto create)
@@ -103,6 +111,12 @@ SITE_NAME=${SITE_NAME:-CapyJudge}
 DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME:-admin}
 DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-admin123}
 DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:-capyjudge@gmail.com}
+
+# ============================================
+# Redis & Cache
+# ============================================
+REDIS_URL=${REDIS_URL:-redis://localhost:6379/0}
+MEMCACHED_URL=${MEMCACHED_URL:-127.0.0.1:11211}
 
 # ============================================
 # Judge (optional)
@@ -115,17 +129,28 @@ CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
 # ============================================
 # EMAIL_HOST=smtp.gmail.com
 # EMAIL_PORT=587
-# EMAIL_USER=capyjudge@gmail.com
-# EMAIL_PASSWORD=your-app-password
+# EMAIL_HOST_USER=capyjudge@gmail.com
+# EMAIL_HOST_PASSWORD=your-app-password
 # EMAIL_USE_TLS=True
 # DEFAULT_FROM_EMAIL=capyjudge@gmail.com
 
 # ============================================
-# Internal Keys (auto-generated)
+# Security Keys (auto-generated)
 # ============================================
 SECRET_KEY=${SECRET_KEY}
 CHAT_SECRET_KEY=${CHAT_SECRET_KEY}
 EVENT_DAEMON_KEY=${EVENT_DAEMON_KEY}
+
+# ============================================
+# Event Daemon
+# ============================================
+EVENT_DAEMON_URL=http://localhost:${WEBSOCKET_PORT:-15100}
+EVENT_DAEMON_PUBLIC_URL=http://${SITE_DOMAIN:-localhost}:${WEBSOCKET_PORT:-15100}
+
+# ============================================
+# Organization Subdomain (optional)
+# ============================================
+# USE_SUBDOMAIN=False
 EOF
 
     chown "${APP_USER}:${APP_GROUP}" "$ENV_FILE"
@@ -145,7 +170,7 @@ apt-get update -y
 apt-get install -y \
     git curl wget gnupg lsb-release ca-certificates \
     python3 python3-pip python3-dev python3-venv \
-    gcc g++ make \
+    gcc g++ gcc-12 g++-12 make \
     libxml2-dev libxslt1-dev zlib1g-dev \
     gettext pkg-config \
     mariadb-client libmariadb-dev \
@@ -154,23 +179,34 @@ apt-get install -y \
     netcat-openbsd \
     redis-server \
     mariadb-server \
+    memcached \
     build-essential \
     libssl-dev \
-    libffi-dev
+    libffi-dev \
+    libseccomp-dev \
+    automake \
+    cmake \
+    libpq-dev
 
-# Install Node.js tools
+# Install Node.js 18.x (required for websocket)
+curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+apt-get install -y nodejs
+
+# Install Node.js global tools
 npm install -g sass postcss-cli postcss autoprefixer
 
 # Upgrade pip
 pip3 install --upgrade pip
 
-# Install Python packages
+# Install Python packages globally (some are needed for setup)
 pip3 install \
     PyMySQL mysqlclient \
     uwsgi websocket-client \
     celery redis \
     django-compressor \
-    cryptography
+    cryptography \
+    boto3 django-storages \
+    pre-commit
 
 log_info "System dependencies installed successfully"
 
@@ -202,13 +238,16 @@ log_info "User and group setup complete"
 log_info "Step 2: Creating directory structure..."
 
 # Create directories
-mkdir -p "${DATA_DIR}"/{static,media,problems,secrets}
-mkdir -p "${LOG_DIR}"/{nginx,supervisor,uwsgi,django}
+mkdir -p "${DATA_DIR}"/{static,media,problems,secrets,cache,logs}
+mkdir -p "${DATA_DIR}/problems/__conf__"
+mkdir -p "${LOG_DIR}"/{nginx,supervisor,uwsgi,django,celery,websocket,redis,memcached}
 mkdir -p "${APP_DIR}"
+mkdir -p /run/nginx /var/log/nginx
 
 # Set ownership
 chown -R "${APP_USER}:${APP_GROUP}" "${DATA_DIR}" "${LOG_DIR}" "${APP_DIR}"
-chmod 755 "${DATA_DIR}" "${LOG_DIR}"
+chown -R www-data:www-data /var/log/nginx /run/nginx
+chmod 755 "${DATA_DIR}" "${LOG_DIR}" /run/nginx
 
 log_info "Directory structure created"
 
@@ -221,8 +260,13 @@ if [ -d "${APP_DIR}/.git" ]; then
     log_warn "Repository already exists, pulling latest changes"
     cd "${APP_DIR}"
     sudo -u "${APP_USER}" git pull
+    sudo -u "${APP_USER}" git submodule init
+    sudo -u "${APP_USER}" git submodule update
 else
     sudo -u "${APP_USER}" git clone https://github.com/a3chuyentin/capyjudge.git "${APP_DIR}"
+    cd "${APP_DIR}"
+    sudo -u "${APP_USER}" git submodule init
+    sudo -u "${APP_USER}" git submodule update
     log_info "Repository cloned successfully"
 fi
 
@@ -233,51 +277,45 @@ cd "${APP_DIR}"
 # ============================================
 log_info "Step 4: Checking for .env file..."
 
-# First, check if .env.example exists in repository
+# Create .env.example if not exists
 if [ ! -f "${ENV_EXAMPLE}" ]; then
-    log_warn ".env.example not found in repository, creating default template"
+    log_warn ".env.example not found, creating default template"
     cat > "${ENV_EXAMPLE}" << 'EOF'
-# ============================================
-# Ports configuration
-# ============================================
-WEB_PORT=8000
+# CapyJudge Environment Configuration Example
+# Copy this file to .env and modify as needed
+
+# Ports
+WEB_PORT=80
 BRIDGE_PORT=9999
+WEBSOCKET_PORT=15100
 
-# ============================================
-# Database (required)
-# ============================================
-DB_PASSWORD=your_strong_db_password_here
-DB_ROOT_PASSWORD=your_root_password_here
+# Database
+DB_NAME=capyjudge
+DB_USER=capyjudge
+DB_PASSWORD=your_strong_password
+DB_HOST=localhost
+DB_PORT=3306
 
-# ============================================
 # Django
-# ============================================
 DEBUG=False
 SITE_DOMAIN=localhost
 SITE_NAME=CapyJudge
 
-# ============================================
-# Superuser (optional - auto create)
-# ============================================
+# Security (generate with: python3 -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())")
+SECRET_KEY=your-secret-key-here
+CHAT_SECRET_KEY=your-fernet-key-here
+EVENT_DAEMON_KEY=your-event-key-here
+
+# Redis
+REDIS_URL=redis://localhost:6379/0
+
+# Memcached
+MEMCACHED_URL=127.0.0.1:11211
+
+# Superuser
 DJANGO_SUPERUSER_USERNAME=admin
 DJANGO_SUPERUSER_PASSWORD=admin123
-DJANGO_SUPERUSER_EMAIL=capyjudge@gmail.com
-
-# ============================================
-# Judge (optional)
-# ============================================
-JUDGE_NAME=judge-0
-CELERY_CONCURRENCY=2
-
-# ============================================
-# Email (optional)
-# ============================================
-# EMAIL_HOST=smtp.gmail.com
-# EMAIL_PORT=587
-# EMAIL_USER=capyjudge@gmail.com
-# EMAIL_PASSWORD=your-app-password
-# EMAIL_USE_TLS=True
-# DEFAULT_FROM_EMAIL=capyjudge@gmail.com
+DJANGO_SUPERUSER_EMAIL=admin@capyjudge.com
 EOF
     chown "${APP_USER}:${APP_GROUP}" "${ENV_EXAMPLE}"
 fi
@@ -292,9 +330,9 @@ else
 fi
 
 # ============================================
-# Step 5: Install Python Dependencies
+# Step 5: Setup Virtual Environment & Dependencies
 # ============================================
-log_info "Step 5: Installing Python dependencies..."
+log_info "Step 5: Setting up Python virtual environment..."
 
 # Create virtual environment
 if [ ! -d "${APP_HOME}/venv" ]; then
@@ -308,7 +346,8 @@ pip install --upgrade pip
 if [ -f "${APP_DIR}/requirements.txt" ]; then
     pip install -r "${APP_DIR}/requirements.txt"
 fi
-pip install uwsgi websocket-client
+pip install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages
+pre-commit install
 EOF
 
 # Install Node dependencies for websocket
@@ -319,101 +358,185 @@ cd "${APP_DIR}"
 log_info "Dependencies installed"
 
 # ============================================
-# Step 6: Setup MySQL Database
+# Step 6: Setup MySQL Database with Timezone
 # ============================================
-log_info "Step 6: Configuring MySQL database..."
+log_info "Step 6: Configuring MySQL/MariaDB database..."
 
-# Start MySQL service
+# Start MariaDB service
 systemctl start mariadb
 systemctl enable mariadb
 
-# Create database and user
+# Create database, user, and setup timezone
 mysql << EOF
-CREATE DATABASE IF NOT EXISTS capyjudge CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS 'capyjudge'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
-GRANT ALL PRIVILEGES ON capyjudge.* TO 'capyjudge'@'localhost';
+CREATE DATABASE IF NOT EXISTS ${DB_NAME:-capyjudge} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${DB_USER:-capyjudge}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
+GRANT ALL PRIVILEGES ON ${DB_NAME:-capyjudge}.* TO '${DB_USER:-capyjudge}'@'localhost';
+GRANT ALL PRIVILEGES ON test_${DB_NAME:-capyjudge}.* TO '${DB_USER:-capyjudge}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
+
+# Setup timezone data for MySQL
+mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -u root mysql 2>/dev/null || true
+mysql -u root -e "FLUSH TABLES;" mysql 2>/dev/null || true
 
 log_info "Database configured successfully"
 
 # ============================================
-# Step 7: Generate Configuration Files
+# Step 7: Setup Redis and Memcached
 # ============================================
-log_info "Step 7: Generating Django configuration..."
+log_info "Step 7: Configuring Redis and Memcached..."
 
-# Create local_settings.py
-cat > "${APP_DIR}/dmoj/local_settings.py" << 'EOF'
+# Configure Redis
+cat > /etc/redis/redis.conf.d/99-capyjudge.conf << EOF
+maxmemory 256mb
+maxmemory-policy allkeys-lru
+save 900 1
+save 300 10
+save 60 10000
+EOF
+
+# Configure Memcached
+sed -i 's/-m 64/-m 256/' /etc/memcached.conf
+sed -i 's/-l 127.0.0.1/-l 0.0.0.0/' /etc/memcached.conf
+
+# Restart services
+systemctl restart redis-server
+systemctl enable redis-server
+systemctl restart memcached
+systemctl enable memcached
+
+log_info "Redis and Memcached configured"
+
+# ============================================
+# Step 8: Generate Django Configuration
+# ============================================
+log_info "Step 8: Generating Django local_settings.py..."
+
+# Create local_settings.py with all required settings
+cat > "${APP_DIR}/dmoj/local_settings.py" << EOF
 import os
 
+# ============================================
+# Basic Settings
+# ============================================
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 ALLOWED_HOSTS = ['*']
-CSRF_TRUSTED_ORIGINS = ['http://localhost', 'http://127.0.0.1']
 
+# Site settings
 SITE_NAME = os.environ.get('SITE_NAME', 'CapyJudge')
 SITE_LONG_NAME = os.environ.get('SITE_LONG_NAME', 'CapyJudge Online Judge')
 SITE_ADMIN_EMAIL = os.environ.get('SITE_ADMIN_EMAIL', 'admin@localhost')
 SITE_DOMAIN = os.environ.get('SITE_DOMAIN', 'localhost')
 
+CSRF_TRUSTED_ORIGINS = [f'http://{SITE_DOMAIN}', f'http://{SITE_DOMAIN}:{os.environ.get("WEB_PORT", "80")}']
+
+# ============================================
+# Database
+# ============================================
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'capyjudge',
-        'USER': 'capyjudge',
+        'NAME': os.environ.get('DB_NAME', 'capyjudge'),
+        'USER': os.environ.get('DB_USER', 'capyjudge'),
         'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-        'HOST': 'localhost',
-        'PORT': '3306',
-        'OPTIONS': {'charset': 'utf8mb4', 'sql_mode': 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'},
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
+        'PORT': os.environ.get('DB_PORT', '3306'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'sql_mode': 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION',
+        },
     }
 }
 
+# ============================================
+# Cache
+# ============================================
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'unique-snowflake',
+        'BACKEND': 'django.core.cache.backends.memcached.PyMemcacheCache',
+        'LOCATION': os.environ.get('MEMCACHED_URL', '127.0.0.1:11211'),
     }
 }
 
-DMOJ_PROBLEM_DATA_ROOT = '/home/capyjudge/capyjudge-data/problems'
-STATIC_ROOT = '/home/capyjudge/capyjudge-data/static'
-MEDIA_ROOT = '/home/capyjudge/capyjudge-data/media'
+# ============================================
+# Paths
+# ============================================
+DMOJ_PROBLEM_DATA_ROOT = '${DATA_DIR}/problems'
+STATIC_ROOT = '${DATA_DIR}/static'
+MEDIA_ROOT = '${DATA_DIR}/media'
 
+# ============================================
+# Bridge Configuration
+# ============================================
 BRIDGED_JUDGE_ADDRESS = [('0.0.0.0', int(os.environ.get('BRIDGE_PORT', '9999')))]
 BRIDGED_DJANGO_ADDRESS = [('localhost', 9998)]
 
+# ============================================
+# Event Daemon (WebSocket)
+# ============================================
 EVENT_DAEMON_USE = True
 EVENT_DAEMON_KEY = os.environ.get('EVENT_DAEMON_KEY', '')
 EVENT_DAEMON_URL = os.environ.get('EVENT_DAEMON_URL', 'http://localhost:15100')
 EVENT_DAEMON_PUBLIC_URL = os.environ.get('EVENT_DAEMON_PUBLIC_URL', 'http://localhost:15100')
 
+# ============================================
+# Celery (Background Tasks)
+# ============================================
 CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 
+# ============================================
+# Chat System
+# ============================================
 CHAT_SECRET_KEY = os.environ.get('CHAT_SECRET_KEY', '')
 
+# ============================================
+# Static Files
+# ============================================
 STATICFILES_FINDERS = [
     'django.contrib.staticfiles.finders.FileSystemFinder',
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
     'compressor.finders.CompressorFinder',
 ]
 
+# ============================================
+# Logging
+# ============================================
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'handlers': {
-        'console': {'class': 'logging.StreamHandler'},
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
         'file': {
             'class': 'logging.FileHandler',
-            'filename': '/home/capyjudge/logs/django/django.log',
+            'filename': '${LOG_DIR}/django/django.log',
+            'level': 'INFO',
         },
     },
-    'root': {'handlers': ['console', 'file'], 'level': 'INFO'},
+    'root': {
+        'handlers': ['console', 'file'],
+        'level': 'INFO',
+    },
 }
 
+# ============================================
+# Security (Development)
+# ============================================
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
 SECURE_PROXY_SSL_HEADER = None
+
+# ============================================
+# S3 Storage (Optional - uncomment to enable)
+# ============================================
+# DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+# AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
+# AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+# AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', '')
+# AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME', 'ap-southeast-1')
 EOF
 
 # Generate uWSGI configuration
@@ -423,6 +546,7 @@ uwsgi-socket = /tmp/dmoj-site.sock
 chmod-socket = 666
 chdir = ${APP_DIR}
 pythonpath = ${APP_DIR}
+home = ${APP_HOME}/venv
 protocol = uwsgi
 master = true
 env = DJANGO_SETTINGS_MODULE=dmoj.settings
@@ -439,17 +563,20 @@ logto = ${LOG_DIR}/uwsgi/uwsgi.log
 log-reopen = true
 uid = ${APP_USER}
 gid = ${APP_GROUP}
+buffer-size = 32768
+post-buffering = 8192
+socket-timeout = 30
 EOF
 
 # Generate websocket configuration
 cat > "${APP_DIR}/websocket/config.js" << EOF
 module.exports = {
     get_host: '0.0.0.0',
-    get_port: 15100,
+    get_port: ${WEBSOCKET_PORT:-15100},
     post_host: '0.0.0.0',
-    post_port: 15101,
+    post_port: ${WEBSOCKET_PORT:-15101},
     http_host: '0.0.0.0',
-    http_port: 15102,
+    http_port: ${WEBSOCKET_PORT:-15102},
     long_poll_timeout: 29000,
     backend_auth_token: '${EVENT_DAEMON_KEY}',
 };
@@ -458,9 +585,9 @@ EOF
 log_info "Configuration files generated"
 
 # ============================================
-# Step 8: Setup Nginx
+# Step 9: Setup Nginx with Profile Images Support
 # ============================================
-log_info "Step 8: Configuring Nginx..."
+log_info "Step 9: Configuring Nginx..."
 
 cat > /etc/nginx/sites-available/capyjudge << EOF
 server {
@@ -470,31 +597,66 @@ server {
     access_log ${LOG_DIR}/nginx/access.log;
     error_log ${LOG_DIR}/nginx/error.log;
     
+    # Static files
     location /static {
         alias ${DATA_DIR}/static;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
     }
     
+    # Media files
     location /media {
         alias ${DATA_DIR}/media;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
     }
     
+    # Profile images (LQDOJ feature)
+    location /profile_images/ {
+        alias ${APP_DIR}/profile_images/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # Organization images
+    location /organization_images/ {
+        alias ${APP_DIR}/organization_images/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # WebSocket
     location /socket.io/ {
-        proxy_pass http://127.0.0.1:15100/socket.io/;
+        proxy_pass http://127.0.0.1:${WEBSOCKET_PORT:-15100}/socket.io/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 86400;
     }
     
+    # Django application
     location / {
         include uwsgi_params;
         uwsgi_pass unix:///tmp/dmoj-site.sock;
         uwsgi_param UWSGI_SCHEME \$scheme;
         uwsgi_param SERVER_SOFTWARE nginx/\$nginx_version;
+        uwsgi_param HTTP_X_FORWARDED_PROTO \$scheme;
+        uwsgi_param HTTP_X_FORWARDED_HOST \$host;
+        uwsgi_param HTTP_X_FORWARDED_SERVER \$host;
     }
     
+    # Large file uploads for problems
     client_max_body_size 100M;
+    
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
 }
 EOF
 
@@ -502,16 +664,21 @@ EOF
 ln -sf /etc/nginx/sites-available/capyjudge /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 
+# Create necessary directories for nginx
+mkdir -p ${APP_DIR}/profile_images ${APP_DIR}/organization_images
+chown -R ${APP_USER}:${APP_GROUP} ${APP_DIR}/profile_images ${APP_DIR}/organization_images
+
 # Test nginx configuration
 nginx -t
 
 log_info "Nginx configured successfully"
 
 # ============================================
-# Step 9: Setup Supervisor
+# Step 10: Setup Supervisor for All Services
 # ============================================
-log_info "Step 9: Configuring Supervisor..."
+log_info "Step 10: Configuring Supervisor..."
 
+# Site (uWSGI)
 cat > /etc/supervisor/conf.d/capyjudge-site.conf << EOF
 [program:capyjudge-site]
 command=${APP_HOME}/venv/bin/uwsgi --ini ${APP_DIR}/uwsgi.ini
@@ -523,9 +690,10 @@ stdout_logfile=${LOG_DIR}/supervisor/site.log
 stdout_logfile_maxbytes=10MB
 stderr_logfile=${LOG_DIR}/supervisor/site_error.log
 stderr_logfile_maxbytes=10MB
-environment=DJANGO_SETTINGS_MODULE="dmoj.settings",PYTHONPATH="${APP_DIR}",SECRET_KEY="${SECRET_KEY}",DB_PASSWORD="${DB_PASSWORD}",CHAT_SECRET_KEY="${CHAT_SECRET_KEY}",EVENT_DAEMON_KEY="${EVENT_DAEMON_KEY}",DEBUG="${DEBUG}",SITE_DOMAIN="${SITE_DOMAIN}",BRIDGE_PORT="${BRIDGE_PORT:-9999}"
+environment=DJANGO_SETTINGS_MODULE="dmoj.settings",PYTHONPATH="${APP_DIR}",SECRET_KEY="${SECRET_KEY}",DB_PASSWORD="${DB_PASSWORD}",CHAT_SECRET_KEY="${CHAT_SECRET_KEY}",EVENT_DAEMON_KEY="${EVENT_DAEMON_KEY}",DEBUG="${DEBUG}",SITE_DOMAIN="${SITE_DOMAIN}",BRIDGE_PORT="${BRIDGE_PORT:-9999}",WEB_PORT="${WEB_PORT:-80}"
 EOF
 
+# Bridge
 cat > /etc/supervisor/conf.d/capyjudge-bridged.conf << EOF
 [program:capyjudge-bridged]
 command=${APP_HOME}/venv/bin/python3 ${APP_DIR}/manage.py runbridged
@@ -540,20 +708,22 @@ stderr_logfile_maxbytes=10MB
 environment=DJANGO_SETTINGS_MODULE="dmoj.settings",PYTHONPATH="${APP_DIR}",SECRET_KEY="${SECRET_KEY}",DB_PASSWORD="${DB_PASSWORD}",BRIDGE_PORT="${BRIDGE_PORT:-9999}"
 EOF
 
+# Celery
 cat > /etc/supervisor/conf.d/capyjudge-celery.conf << EOF
 [program:capyjudge-celery]
-command=${APP_HOME}/venv/bin/celery -A dmoj_celery worker --concurrency=${CELERY_CONCURRENCY:-2}
+command=${APP_HOME}/venv/bin/celery -A dmoj_celery worker --concurrency=${CELERY_CONCURRENCY:-2} --loglevel=info
 directory=${APP_DIR}
 user=${APP_USER}
 autostart=true
 autorestart=true
-stdout_logfile=${LOG_DIR}/supervisor/celery.log
+stdout_logfile=${LOG_DIR}/celery/celery.log
 stdout_logfile_maxbytes=10MB
-stderr_logfile=${LOG_DIR}/supervisor/celery_error.log
+stderr_logfile=${LOG_DIR}/celery/celery_error.log
 stderr_logfile_maxbytes=10MB
 environment=DJANGO_SETTINGS_MODULE="dmoj.settings"
 EOF
 
+# WebSocket Event Daemon
 cat > /etc/supervisor/conf.d/capyjudge-wsevent.conf << EOF
 [program:capyjudge-wsevent]
 command=node ${APP_DIR}/websocket/daemon.js
@@ -561,18 +731,18 @@ directory=${APP_DIR}
 user=${APP_USER}
 autostart=true
 autorestart=true
-stdout_logfile=${LOG_DIR}/supervisor/wsevent.log
+stdout_logfile=${LOG_DIR}/websocket/wsevent.log
 stdout_logfile_maxbytes=10MB
-stderr_logfile=${LOG_DIR}/supervisor/wsevent_error.log
+stderr_logfile=${LOG_DIR}/websocket/wsevent_error.log
 stderr_logfile_maxbytes=10MB
 EOF
 
 log_info "Supervisor configurations created"
 
 # ============================================
-# Step 10: Django Initialization
+# Step 11: Django Initialization
 # ============================================
-log_info "Step 10: Running Django setup..."
+log_info "Step 11: Running Django setup..."
 
 cd "${APP_DIR}"
 
@@ -588,21 +758,27 @@ export EVENT_DAEMON_KEY="${EVENT_DAEMON_KEY}"
 export DEBUG="${DEBUG}"
 export BRIDGE_PORT="${BRIDGE_PORT:-9999}"
 
-# Compile assets
-./make_style.sh 2>/dev/null || true
+# Compile CSS/SCSS
+if [ -f "./make_style.sh" ]; then
+    ./make_style.sh 2>/dev/null || true
+fi
+
+# Collect static files
 python3 manage.py collectstatic --noinput 2>/dev/null || true
+
+# Compile translations
 python3 manage.py compilemessages 2>/dev/null || true
 python3 manage.py compilejsi18n 2>/dev/null || true
 
 # Run migrations
 python3 manage.py migrate --noinput
 
-# Load initial data
+# Load initial data (using correct fixture names from LQDOJ)
 python3 manage.py loaddata navbar 2>/dev/null || true
-python3 manage.py loaddata language 2>/dev/null || true
+python3 manage.py loaddata language_small 2>/dev/null || python3 manage.py loaddata language 2>/dev/null || true
 python3 manage.py loaddata demo 2>/dev/null || true
 
-# Create superuser if credentials are provided
+# Create superuser if credentials provided
 if [ ! -z "${DJANGO_SUPERUSER_USERNAME}" ] && [ ! -z "${DJANGO_SUPERUSER_PASSWORD}" ]; then
     echo "Creating superuser from environment..."
     python3 manage.py createsuperuser --noinput \
@@ -615,20 +791,26 @@ EOF
 log_info "Django initialization complete"
 
 # ============================================
-# Step 11: Start Services
+# Step 12: Start Services
 # ============================================
-log_info "Step 11: Starting services..."
+log_info "Step 12: Starting all services..."
 
 # Reload systemd
 systemctl daemon-reload
 
-# Start and enable services
-systemctl restart redis-server
-systemctl enable redis-server
+# Start and enable all services
 systemctl restart mariadb
 systemctl enable mariadb
+
+systemctl restart redis-server
+systemctl enable redis-server
+
+systemctl restart memcached
+systemctl enable memcached
+
 systemctl restart nginx
 systemctl enable nginx
+
 systemctl restart supervisor
 systemctl enable supervisor
 
@@ -640,9 +822,9 @@ supervisorctl start all
 log_info "All services started"
 
 # ============================================
-# Step 12: Final Setup
+# Step 13: Final Permissions and Cleanup
 # ============================================
-log_info "Step 12: Final permissions check..."
+log_info "Step 13: Final permissions check..."
 
 # Ensure all directories have correct permissions
 chown -R "${APP_USER}:${APP_GROUP}" "${DATA_DIR}" "${LOG_DIR}" "${APP_DIR}"
@@ -653,6 +835,116 @@ touch "${LOG_DIR}/django/django.log" 2>/dev/null || true
 chown -R "${APP_USER}:${APP_GROUP}" "${LOG_DIR}"
 find "${LOG_DIR}" -type f -exec chmod 644 {} \; 2>/dev/null || true
 
+# Ensure nginx can read static files
+chmod +x "${DATA_DIR}" 2>/dev/null || true
+chmod +x "${DATA_DIR}/static" 2>/dev/null || true
+
+# ============================================
+# Create Management Scripts
+# ============================================
+
+# Status check script
+cat > /usr/local/bin/capyjudge-status << 'EOF'
+#!/bin/bash
+echo "========================================="
+echo "CapyJudge Service Status"
+echo "========================================="
+echo ""
+echo "Supervisor Services:"
+supervisorctl status
+echo ""
+echo "Nginx:"
+systemctl status nginx --no-pager | grep "Active:"
+echo ""
+echo "MariaDB:"
+systemctl status mariadb --no-pager | grep "Active:"
+echo ""
+echo "Redis:"
+systemctl status redis-server --no-pager | grep "Active:"
+echo ""
+echo "Memcached:"
+systemctl status memcached --no-pager | grep "Active:"
+echo ""
+echo "========================================="
+echo "Recent Logs (last 5 lines each)"
+echo "========================================="
+echo "--- Site ---"
+tail -5 /home/capyjudge/logs/supervisor/site.log 2>/dev/null || echo "No log yet"
+echo ""
+echo "--- Bridge ---"
+tail -5 /home/capyjudge/logs/supervisor/bridged.log 2>/dev/null || echo "No log yet"
+echo ""
+echo "--- WebSocket ---"
+tail -5 /home/capyjudge/logs/websocket/wsevent.log 2>/dev/null || echo "No log yet"
+echo ""
+echo "--- Celery ---"
+tail -5 /home/capyjudge/logs/celery/celery.log 2>/dev/null || echo "No log yet"
+EOF
+
+# Restart script
+cat > /usr/local/bin/capyjudge-restart << 'EOF'
+#!/bin/bash
+echo "Restarting CapyJudge services..."
+supervisorctl restart all
+systemctl restart nginx
+echo "Services restarted"
+echo "Run 'capyjudge-status' to check status"
+EOF
+
+# View logs script
+cat > /usr/local/bin/capyjudge-logs << 'EOF'
+#!/bin/bash
+SERVICE=$1
+if [ -z "$SERVICE" ]; then
+    echo "Usage: capyjudge-logs [site|bridge|celery|wsevent|all]"
+    echo ""
+    echo "Available services:"
+    echo "  site     - Django uWSGI logs"
+    echo "  bridge   - Judge bridge logs"
+    echo "  celery   - Celery worker logs"
+    echo "  wsevent  - WebSocket event daemon logs"
+    echo "  all      - Show all logs with multitail"
+    exit 1
+fi
+
+case $SERVICE in
+    site)
+        tail -f /home/capyjudge/logs/supervisor/site.log
+        ;;
+    bridge)
+        tail -f /home/capyjudge/logs/supervisor/bridged.log
+        ;;
+    celery)
+        tail -f /home/capyjudge/logs/celery/celery.log
+        ;;
+    wsevent)
+        tail -f /home/capyjudge/logs/websocket/wsevent.log
+        ;;
+    all)
+        if command -v multitail &> /dev/null; then
+            multitail /home/capyjudge/logs/supervisor/site.log \
+                     /home/capyjudge/logs/supervisor/bridged.log \
+                     /home/capyjudge/logs/websocket/wsevent.log
+        else
+            echo "Install multitail for combined log viewing: sudo apt install multitail"
+            echo "Showing site log only..."
+            tail -f /home/capyjudge/logs/supervisor/site.log
+        fi
+        ;;
+    *)
+        echo "Unknown service: $SERVICE"
+        exit 1
+        ;;
+esac
+EOF
+
+chmod +x /usr/local/bin/capyjudge-status
+chmod +x /usr/local/bin/capyjudge-restart
+chmod +x /usr/local/bin/capyjudge-logs
+
+# ============================================
+# Installation Complete
+# ============================================
 log_info "========================================="
 log_info "CapyJudge Installation Complete!"
 log_info "========================================="
@@ -660,47 +952,34 @@ log_info "Installation Directory: ${APP_DIR}"
 log_info "Data Directory: ${DATA_DIR}"
 log_info "Logs Directory: ${LOG_DIR}"
 log_info ""
-log_info "Database Name: capyjudge"
-log_info "Database User: capyjudge"
+log_info "Database: ${DB_NAME:-capyjudge}"
+log_info "Database User: ${DB_USER:-capyjudge}"
 log_info ""
-log_info "Web Port: ${WEB_PORT:-8000}"
+log_info "Web Port: ${WEB_PORT:-80}"
 log_info "Bridge Port: ${BRIDGE_PORT:-9999}"
+log_info "WebSocket Port: ${WEBSOCKET_PORT:-15100}"
 log_info ""
 log_info "Environment file: ${ENV_FILE}"
 log_info "Secret keys saved in: ${DATA_DIR}/secrets/"
 log_info ""
-log_info "To check service status:"
-log_info "  supervisorctl status"
-log_info "  systemctl status nginx"
+log_info "Management Commands:"
+log_info "  capyjudge-status   - Check all service statuses"
+log_info "  capyjudge-restart  - Restart all services"
+log_info "  capyjudge-logs     - View logs for specific service"
 log_info ""
-log_info "To view logs:"
-log_info "  tail -f ${LOG_DIR}/supervisor/*.log"
+log_info "Access CapyJudge at: http://${SITE_DOMAIN:-localhost}:${WEB_PORT:-80}"
 log_info ""
-log_info "Access CapyJudge at: http://localhost:${WEB_PORT:-8000}"
+log_info "Superuser Account (if created):"
+log_info "  Username: ${DJANGO_SUPERUSER_USERNAME:-admin}"
+log_info "  Password: ${DJANGO_SUPERUSER_PASSWORD:-admin123}"
 log_info "========================================="
 
-# Create status check script
-cat > /usr/local/bin/capyjudge-status << 'EOF'
-#!/bin/bash
-echo "=== CapyJudge Service Status ==="
-echo ""
-echo "Supervisor Services:"
-supervisorctl status
-echo ""
-echo "Nginx Status:"
-systemctl status nginx --no-pager | grep "Active:"
-echo ""
-echo "MySQL Status:"
-systemctl status mariadb --no-pager | grep "Active:"
-echo ""
-echo "Redis Status:"
-systemctl status redis-server --no-pager | grep "Active:"
-echo ""
-echo "=== End ==="
-EOF
-
-chmod +x /usr/local/bin/capyjudge-status
-
-log_info "Created status check script: capyjudge-status"
+# Test if services are running
+sleep 3
+if supervisorctl status | grep -q "RUNNING"; then
+    log_info "Services are running successfully!"
+else
+    log_warn "Some services may not be running. Check with: capyjudge-status"
+fi
 
 exit 0
