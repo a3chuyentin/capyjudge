@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ make python3-dev \
     libxml2-dev libxslt1-dev zlib1g-dev \
     gettext curl pkg-config \
-    mariadb-client libmysqlclient-dev \
+    mariadb-client libmariadb-dev \
     nginx supervisor nodejs npm \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
@@ -46,8 +46,8 @@ RUN useradd -m -s /bin/bash www-data && \
     mkdir -p /app/static /app/media /problems /data && \
     chown -R www-data:www-data /app/static /app/media /problems /data
 
-# Remove sample_conf directory (not needed anymore)
-RUN rm -rf /app/sample_conf
+# Remove sample_conf directory if exists
+RUN rm -rf /app/sample_conf 2>/dev/null || true
 
 EXPOSE 80
 
