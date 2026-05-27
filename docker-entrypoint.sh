@@ -5,7 +5,7 @@ echo "Starting CapyJudge Docker container..."
 
 # ============================================
 # Helper functions
-# ============================================
+#=============================================
 generate_secret_key() {
     python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 }
@@ -68,6 +68,16 @@ if [ -z "$DB_PASSWORD" ]; then
 fi
 
 export SECRET_KEY CHAT_SECRET_KEY EVENT_DAEMON_KEY DB_PASSWORD
+
+# ============================================
+# Install websocket dependencies if missing
+# ============================================
+echo "Checking websocket dependencies..."
+cd /app/websocket
+if [ ! -d "node_modules" ] || [ ! -f "node_modules/socket.io/package.json" ]; then
+    echo "Installing websocket dependencies..."
+    npm install express socket.io qu ws simplesets
+fi
 
 # ============================================
 # Generate local_settings.py
@@ -184,7 +194,7 @@ server {
         alias /app/media;
     }
     location /socket.io/ {
-        proxy_pass http://websocket:15100/socket.io/;
+        proxy_pass http://localhost:15100/socket.io/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -209,6 +219,10 @@ directory=/app
 user=www-data
 autostart=true
 autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
 EOF
 
 cat > /etc/supervisor/conf.d/bridged.conf << 'EOF'
@@ -218,6 +232,10 @@ directory=/app
 user=www-data
 autostart=true
 autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
 EOF
 
 cat > /etc/supervisor/conf.d/celery.conf << 'EOF'
@@ -227,6 +245,10 @@ directory=/app
 user=www-data
 autostart=true
 autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
 EOF
 
 cat > /etc/supervisor/conf.d/wsevent.conf << 'EOF'
@@ -236,6 +258,10 @@ directory=/app
 user=www-data
 autostart=true
 autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
 EOF
 
 # ============================================
@@ -243,9 +269,13 @@ EOF
 # ============================================
 cat > /app/websocket/config.js << EOF
 module.exports = {
+    get_host: '0.0.0.0',
     get_port: 15100,
+    post_host: '0.0.0.0',
     post_port: 15101,
+    http_host: '0.0.0.0',
     http_port: 15102,
+    long_poll_timeout: 29000,
     backend_auth_token: '${EVENT_DAEMON_KEY}',
 };
 EOF
@@ -265,6 +295,8 @@ while ! nc -z ${DB_HOST:-db} ${DB_PORT:-3306}; do
     sleep 1
 done
 
+echo "Database ready"
+
 # ============================================
 # Compile assets at runtime
 # ============================================
@@ -281,15 +313,28 @@ python manage.py compilejsi18n || true
 echo "Running migrations..."
 python manage.py migrate --noinput
 
+# Check if database is new (has no tables)
+TABLE_COUNT=$(python manage.py sqlflush 2>/dev/null | grep -c "TRUNCATE" || echo "0")
+if [ "$TABLE_COUNT" -eq 0 ]; then
+    echo "Loading initial data for new database..."
+    python manage.py loaddata navbar language_small demo 2>/dev/null || true
+fi
+
+# Create superuser
 if [ ! -z "$DJANGO_SUPERUSER_USERNAME" ] && [ ! -z "$DJANGO_SUPERUSER_PASSWORD" ]; then
-    echo "Creating superuser..."
+    echo "Creating superuser from environment..."
     python manage.py createsuperuser --noinput \
         --username "$DJANGO_SUPERUSER_USERNAME" \
         --email "${DJANGO_SUPERUSER_EMAIL:-admin@capyjudge.com}" 2>/dev/null || true
 fi
 
+# Create directories
 mkdir -p /app/static /app/media /problems
 chown -R www-data:www-data /app/static /app/media /problems
 
 echo "All setup complete"
+
+# ============================================
+# Start supervisor
+# ============================================
 exec "$@"
