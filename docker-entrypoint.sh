@@ -19,6 +19,20 @@ generate_random_password() {
 }
 
 # ============================================
+# Fix permissions
+# ============================================
+echo "Fixing permissions..."
+chmod 777 /tmp
+chmod 666 /dev/stdout 2>/dev/null || true
+chmod 666 /dev/stderr 2>/dev/null || true
+
+# Ensure directories exist with correct permissions
+mkdir -p /app/static /app/media /problems /data /var/log/nginx /var/lib/nginx /run/nginx
+chown -R www-data:www-data /app/static /app/media /problems /data
+chown -R www-data:www-data /var/log/nginx /var/lib/nginx /run/nginx
+chmod -R 755 /app/static /app/media /problems
+
+# ============================================
 # Secrets management
 # ============================================
 echo "Checking secrets..."
@@ -78,6 +92,7 @@ if [ ! -d "node_modules" ] || [ ! -f "node_modules/socket.io/package.json" ]; th
     echo "Installing websocket dependencies..."
     npm install express socket.io qu ws simplesets
 fi
+cd /app
 
 # ============================================
 # Generate local_settings.py
@@ -151,7 +166,7 @@ LOGGING = {
 EOF
 
 # ============================================
-# Generate uwsgi.ini
+# Generate uwsgi.ini (without pidfile and logto)
 # ============================================
 echo "Generating uwsgi.ini..."
 
@@ -159,7 +174,6 @@ cat > /app/uwsgi.ini << 'EOF'
 [uwsgi]
 uwsgi-socket = /tmp/dmoj-site.sock
 chmod-socket = 666
-pidfile = /tmp/dmoj-site.pid
 chdir = /app
 pythonpath = /app
 protocol = uwsgi
@@ -207,7 +221,7 @@ server {
 EOF
 
 # ============================================
-# Generate supervisor configs
+# Generate supervisor configs (with root for site)
 # ============================================
 echo "Generating supervisor configs..."
 
@@ -215,7 +229,7 @@ cat > /etc/supervisor/conf.d/site.conf << 'EOF'
 [program:site]
 command=uwsgi --ini /app/uwsgi.ini
 directory=/app
-user=www-data
+user=root
 autostart=true
 autorestart=true
 stdout_logfile=/dev/stdout
@@ -327,13 +341,18 @@ if [ ! -z "$DJANGO_SUPERUSER_USERNAME" ] && [ ! -z "$DJANGO_SUPERUSER_PASSWORD" 
         --email "${DJANGO_SUPERUSER_EMAIL:-admin@capyjudge.com}" 2>/dev/null || true
 fi
 
-# Create directories
-mkdir -p /app/static /app/media /problems
+# Final permission fix
 chown -R www-data:www-data /app/static /app/media /problems
+chmod -R 755 /app/static /app/media
 
 echo "All setup complete"
 
 # ============================================
-# Start supervisor
+# Start services directly (without supervisor for nginx)
 # ============================================
-exec "$@"
+echo "Starting services..."
+nginx
+supervisord -c /etc/supervisor/supervisord.conf
+
+# Keep container running
+tail -f /dev/null
