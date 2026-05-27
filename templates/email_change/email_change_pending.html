@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block body %}
+  {% if new_email %}
+    <p>{{ _('An email was sent to') }} {{new_email}}. {{_('If you don\'t see it, kindly check your spam folder as well.')}}</p>
+  {% endif %}
+{% endblock %}

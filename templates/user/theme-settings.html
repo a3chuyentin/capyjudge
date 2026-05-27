@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block js_media %}
+  {{ background_form.media.js }}
+  <script src="{{ static('theme-settings.js') }}"></script>
+{% endblock %}
+
+{% block title_row %}
+  {% include "tabs-base.html" %}
+{% endblock %}
+
+{% block tabs %}
+  {{ make_tab('about', 'fa-info-circle', url('user_page', request.profile.user.username), _('About')) }}
+  {{ make_tab('bookmark', 'fa-bookmark', url('user_bookmark'), _('Bookmarks')) }}
+  {{ make_tab('edit', 'fa-gear', url('user_edit_profile'), _('Settings')) }}
+  {{ make_tab('theme', 'fa-palette', url('theme_settings'), _('Theme')) }}
+{% endblock %}
+
+{% block body %}
+  <div class="theme-settings-page">
+  <!-- Dark Mode Section -->
+    <section class="theme-section">
+      <h3><i class="fa fa-adjust"></i> {{ _('Appearance Mode') }}</h3>
+      <div class="mode-toggle">
+        <div class="mode-option mode-option-small {{ '' if use_darkmode else 'active' }}" data-mode="light">
+          <i class="fa fa-sun"></i>
+          <span>{{ _('Light') }}</span>
+        </div>
+        <div class="mode-option mode-option-small {{ 'active' if use_darkmode else '' }}" data-mode="dark">
+          <i class="fa fa-moon"></i>
+          <span>{{ _('Dark') }}</span>
+        </div>
+      </div>
+    </section>
+
+  <!-- Background Section -->
+    <section class="theme-section">
+      <h3><i class="fa fa-image"></i> {{ _('Background') }}</h3>
+
+    <!-- Custom Upload -->
+      <div class="custom-upload-section">
+        <p class="section-label">{{ _('Your Background') }}:</p>
+        {{ background_form.background_image }}
+        <p class="upload-hint">{{ _('Max 5MB. Supported formats: JPG, PNG, WebP, GIF.') }}</p>
+      </div>
+
+    <!-- Sample Backgrounds -->
+      <div class="sample-backgrounds-section">
+        <p class="section-label">{{ _('Sample Backgrounds') }}:</p>
+        {% if sample_backgrounds %}
+          <div class="background-grid">
+            {% for bg in sample_backgrounds %}
+              <form method="post" class="background-card-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="select_sample">
+                <input type="hidden" name="sample_filename" value="{{ bg.filename }}">
+                <button type="submit" class="background-card" title="{{ bg.name }}">
+                  <img src="{{ bg.url }}" alt="{{ bg.name }}">
+                  <div class="bg-name">{{ bg.name }}</div>
+                </button>
+              </form>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="no-samples-message">{{ _('No sample backgrounds available.') }}</p>
+        {% endif %}
+
+      <!-- Admin: Upload Sample Background (inline) -->
+        {% if is_superuser %}
+          <div class="admin-upload-inline">
+            <input type="file" id="sample-upload-file" accept="image/*">
+            <button type="button" id="upload-sample-btn" class="action-btn">
+              <i class="fa fa-plus"></i> {{ _('Add Sample') }}
+            </button>
+            {% if sample_backgrounds %}
+              <button type="button" id="manage-samples-btn" class="action-btn secondary-btn">
+                <i class="fa fa-cog"></i> {{ _('Manage') }}
+              </button>
+            {% endif %}
+          </div>
+
+        <!-- Admin: Delete samples modal/section (hidden by default) -->
+          {% if sample_backgrounds %}
+            <div id="admin-samples-manager" class="admin-samples-manager" style="display: none;">
+              <p class="section-label">{{ _('Delete Sample Backgrounds') }}:</p>
+              <div class="admin-bg-grid">
+                {% for bg in sample_backgrounds %}
+                  <div class="admin-bg-item" data-filename="{{ bg.filename }}">
+                    <img src="{{ bg.url }}" alt="{{ bg.name }}">
+                    <button type="button" class="delete-bg-btn" data-filename="{{ bg.filename }}" title="{{ _('Delete') }}">
+                      <i class="fa fa-trash"></i>
+                    </button>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+        {% endif %}
+      </div>
+    </section>
+
+  <!-- Dynamic Effects Section -->
+    <section class="theme-section">
+      <h3><i class="fa fa-sparkles"></i> {{ _('Dynamic Effects') }}</h3>
+      <p class="section-description">{{ _('Add animated effects to your page. Effects are visible on desktop only.') }}</p>
+
+      <div class="effects-grid">
+        {% for effect_key, effect_name in dynamic_effects %}
+          <form method="post" class="effect-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_effect">
+            <input type="hidden" name="dynamic_effect" value="{{ effect_key }}">
+            <button type="submit" class="effect-option {{ 'selected' if profile.dynamic_effect == effect_key else '' }}">
+              <div class="effect-icon">
+                {% if effect_key == 'none' %}
+                  <i class="fa fa-ban"></i>
+                {% elif effect_key == 'snowflakes' %}
+                  <i class="fa fa-snowflake"></i>
+                {% elif effect_key == 'snow' %}
+                  <i class="fa fa-cloud"></i>
+                {% elif effect_key == 'cherry_blossoms' %}
+                  <i class="fa fa-fan"></i>
+                {% elif effect_key == 'red_poinciana' %}
+                  <span style="font-size: 1.3em; line-height: 1; color: #e31b23;">✿</span>
+                {% elif effect_key == 'rain' %}
+                  <i class="fa fa-cloud-rain"></i>
+                {% elif effect_key == 'fireflies' %}
+                  <i class="fa fa-lightbulb"></i>
+                {% elif effect_key == 'lunar_new_year' %}
+                  <span style="font-size: 1.3em; line-height: 1;">🧧</span>
+                {% endif %}
+              </div>
+              <span>{{ effect_name }}</span>
+            </button>
+          </form>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+
+  <input type="hidden" id="csrf-token" value="{{ csrf_token }}">
+  <input type="hidden" id="upload-url" value="{{ url('upload_sample_background') }}">
+  <input type="hidden" id="delete-url" value="{{ url('delete_sample_background') }}">
+  <input type="hidden" id="toggle-darkmode-url" value="{{ url('toggle_darkmode_ajax') }}">
+{% endblock %}

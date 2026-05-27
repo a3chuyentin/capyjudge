@@ -1,0 +1,38 @@
+{% for comment in comments %}
+  <div class="comment-item background-white">
+    <div class="comment-icon">
+      {% if comment.linked_object %}
+        {% if comment.linked_object.__class__.__name__ == 'Problem' %}
+          <i class="fa fa-puzzle-piece"></i>
+        {% elif comment.linked_object.__class__.__name__ == 'Contest' %}
+          <i class="fa fa-trophy"></i>
+        {% elif comment.linked_object.__class__.__name__ == 'BlogPost' %}
+          <i class="fa fa-rss"></i>
+        {% else %}
+          <i class="fa fa-file"></i>
+        {% endif %}
+      {% else %}
+        <i class="fa fa-comment"></i>
+      {% endif %}
+    </div>
+    <div class="comment-content">
+      <a href="{{ comment.get_absolute_url() }}">
+        {{ comment.page_title }}
+      </a>
+    </div>
+    <div class="comment-meta">
+      <div class="comment-user">
+        <span class="user-name">{{ link_user(comment.author_id) }}</span>
+        {% if comment.score != 0 %}
+          <span class="comment-score {% if comment.score > 0 %}positive{% else %}negative{% endif %}">
+            {% if comment.score > 0 %}+{% endif %}{{ comment.score }}
+          </span>
+        {% endif %}
+      </div>
+      <span class="comment-time">
+        {{ relative_time(comment.time, format=_("d/m/Y")) }}
+      </span>
+    </div>
+  </div>
+{% endfor %}
+{% include "feed/has_next.html" %}

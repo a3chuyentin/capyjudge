@@ -1,0 +1,33 @@
+{% for ticket in tickets %}
+  <div class="ticket-item background-white">
+    <div class="ticket-status {% if ticket.is_open %}open{% else %}closed{% endif %}">
+      <span>
+        {% if ticket.is_open %}{{_('Open')}}{% else %}{{_('Closed')}}{% endif %}
+      </span>
+    </div>
+    <div class="ticket-content">
+      <div class="ticket-title">
+        <a href="{{ url('ticket', ticket.id) }}">
+          {{ ticket.title }}
+        </a>
+      </div>
+      <div class="ticket-link">
+        <i class="fa fa-link"></i>
+        <a href="{{ ticket.linked_item.get_absolute_url() }}">{{ ticket.linked_item|item_title }}</a>
+      </div>
+    </div>
+    <div class="ticket-meta">
+      <div class="ticket-user">
+        <span>{{ link_user(ticket.user_id) }}</span>
+      </div>
+      <span class="ticket-time">
+        {% if ticket.last_action_time %}
+          {{ relative_time(ticket.last_action_time, format=_("d/m/Y")) }}
+        {% else %}
+          {{ relative_time(ticket.time) }}
+        {% endif %}
+      </span>
+    </div>
+  </div>
+{% endfor %}
+{% include "feed/has_next.html" %}

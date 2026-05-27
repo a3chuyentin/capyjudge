@@ -1,0 +1,112 @@
+{% extends "problem/edit_base.html" %}
+{% set page_type = 'import' %}
+
+{% block js_media %}
+  <script type="text/javascript">
+    window.IMPORT_CONFIG = {
+      uploadUrl: '{{ url("problem_package_import_upload", problem.code) }}',
+      applyUrl: '{{ url("problem_package_import_apply", problem.code) }}',
+      taskStatusUrl: '{{ url("task_status_ajax") }}',
+      filePreviewUrl: '{{ url("problem_package_import_file", problem.code) }}',
+      csrfToken: '{{ csrf_token }}',
+      problemCode: '{{ problem.code }}',
+      maxUploadSize: {{ max_upload_size }},
+      lastTaskId: '{{ last_task_id }}',
+      i18n: {
+        uploading: '{{ _("Uploading zip...") }}',
+        processing: '{{ _("AI is processing the package... This may take several minutes.") }}',
+        loading: '{{ _("Loading previous import results...") }}',
+        complete: '{{ _("Processing complete!") }}',
+        failed: '{{ _("Processing failed") }}',
+        retryHint: '{{ _("AI processed the package but failed to send the files back. This is intermittent — please try uploading again.") }}',
+        taskFailed: '{{ _("Task failed") }}',
+        lostConnection: '{{ _("Lost connection to server") }}',
+        uploadFailed: '{{ _("Upload failed") }}',
+        fileTooLarge: '{{ _("File too large") }}',
+        format: '{{ _("Format") }}',
+        problem: '{{ _("Problem") }}',
+        tests: '{{ _("Tests") }}',
+        samples: '{{ _("samples") }}',
+        solutions: '{{ _("Solutions") }}',
+        found: '{{ _("found") }}',
+        description: '{{ _("Description") }}',
+        images: '{{ _("images") }}',
+        image: '{{ _("image") }}',
+        imagesIncluded: '{{ _("Images included") }}',
+        timeLimit: '{{ _("Time Limit") }}',
+        memoryLimit: '{{ _("Memory Limit") }}',
+        testData: '{{ _("Test Data") }}',
+        checker: '{{ _("Checker") }}',
+        generator: '{{ _("Generator") }}',
+        generatorScript: '{{ _("Generator Script") }}',
+        interactive: '{{ _("Interactive Judge") }}',
+        cappedFrom: '{{ _("capped from") }}',
+      },
+    };
+  </script>
+  <script type="text/javascript" src="{{ static('package_import.js') }}"></script>
+{% endblock %}
+
+{% block edit_media %}
+{% endblock %}
+
+{% block edit_content %}
+  <div class="package-import-page">
+    <div id="import-upload-section">
+      <div class="import-upload-area">
+        <p>{{ _("Upload a problem package (zip) to import test data, checker, description, and more.") }}</p>
+        <p class="import-field-meta">
+          {{ _("Supports: Polygon, Kattis/ICPC, USACO, and other formats. Max 50 MB.") }}
+        </p>
+        <input type="file" id="import-file-input" accept=".zip" style="margin: 5px;">
+        <textarea id="import-hint-input" rows="2" maxlength="1000"
+                  placeholder="{{ _('Optional notes for the AI (e.g. \"Kaggle-like, train/test 80/20, RMSE on column y\")') }}"
+                  style="display:block; width:100%; margin: 5px 0;"></textarea>
+        <button type="button" class="action-btn" id="import-upload-btn" disabled>
+          <i class="fa fa-magic"></i> {{ _("Upload") }}
+        </button>
+      </div>
+
+      <details style="margin-top: 1em;">
+        <summary>{{ _("Or bootstrap a Kaggle-style problem from a single labeled CSV") }}</summary>
+        <div class="import-upload-area" style="margin-top: 0.5em;">
+          <p class="import-field-meta">
+            {{ _("Upload a labeled CSV (id, features, label). The system splits it into train/test by hashed id, generates train.csv + test_input.csv + sample_submission.csv as attachments, and a testdata.zip with the hidden answer.") }}
+          </p>
+          <input type="file" id="kaggle-file-input" accept=".csv,.zip" style="margin: 5px;">
+          <div style="display:flex; flex-wrap: wrap; gap: 0.5em; margin: 5px 0;">
+            <label>{{ _("Metric") }}:
+              <select id="kaggle-metric">
+                <option value="csv_rmse">csv_rmse</option>
+                <option value="csv_mae">csv_mae</option>
+                <option value="csv_accuracy">csv_accuracy</option>
+                <option value="csv_f1">csv_f1</option>
+                <option value="csv_auc">csv_auc</option>
+                <option value="csv_logloss">csv_logloss</option>
+              </select>
+            </label>
+            <label>{{ _("Train ratio") }}: <input type="number" id="kaggle-ratio" min="0.05" max="0.95" step="0.05" value="0.8" style="width: 5em;"></label>
+            <label><input type="checkbox" id="kaggle-has-header" checked> has_header</label>
+            <label>id_column: <input type="text" id="kaggle-id" style="width: 7em;"></label>
+            <label>label_column: <input type="text" id="kaggle-label" style="width: 8em;"></label>
+          </div>
+          <button type="button" class="action-btn" id="kaggle-bootstrap-btn" disabled>
+            <i class="fa fa-cogs"></i> {{ _("Bootstrap") }}
+          </button>
+        </div>
+      </details>
+    </div>
+
+    <p class="import-field-meta" style="margin-top: 5px;">
+      <i class="fa fa-info-circle"></i>
+      {{ _("AI-generated results may be incomplete or inaccurate. Please review each field carefully before applying.") }}
+    </p>
+
+    <div id="import-status" class="import-status"></div>
+
+    <div id="import-results" class="import-results">
+      <div id="import-summary" style="margin-bottom: 15px;"></div>
+      <div id="import-fields"></div>
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,13 @@
+<span class="organization-tag course-tag" style="gap: 0.2em;">
+  <a href="{{ course.get_absolute_url() }}" style="display: flex; gap: 0.2em; align-items: center;">
+    {% if course.course_image %}
+      <img class="user-img" style="height: 1.5em; width: 1.5em;" loading="lazy" src="{{ course.course_image.url }}">
+    {% endif %}
+    {{ course.name }}
+  </a>
+  {% if edit_url %}
+    <a href="{{ edit_url }}" class="organization-tag-edit" title="{{ _('Edit') }}">
+      <i class="fa fa-pencil-alt"></i>
+    </a>
+  {% endif %}
+</span>

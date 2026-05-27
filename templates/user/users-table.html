@@ -1,0 +1,56 @@
+{% extends "user/base-users-table.html" %}
+
+{% block row_extra %}
+  id="user-{{ user.username }}"
+{% endblock %}
+
+{% block after_rank_head %}
+  <th></th>
+{% endblock %}
+
+{% block after_rank %}
+  <td><img loading="lazy" style="max-width: none;" class="user-img" src="{{ gravatar(user.id, 40) }}" height="40px" width="40px"></td>
+{% endblock %}
+
+{% block user_footer %}
+  {% if user.rating %}
+    <span class="user-rating-badge">{{ rating_number(user) }}</span>
+  {% endif %}
+{% endblock %}
+
+{% block after_point_head %}
+  <th class="problems">
+    {% if sort_links %}<a href="{{ sort_links.problem_count }}">{% endif %}
+    {{ _('Problems') }}
+    {%- if sort_links %}{{ sort_order.problem_count }}</a>{% endif %}
+  </th>
+  <th class="contribution">
+    {% if sort_links %}<a href="{{ sort_links.contribution_points }}">{% endif %}
+    {{ _('Contribution') }}
+    {%- if sort_links %}{{ sort_order.contribution_points }}</a>{% endif %}
+  </th>
+  <th class="about-column">{{ _('About') }}</th>
+{% endblock %}
+
+{% block username_head_extra %}
+  <span style="margin-left: 0.5em" class="header rank">
+    {% if sort_links %}<a href="{{ sort_links.rating }}">{% endif %}
+    <span class="rate-group">
+      <svg class="rate-box" viewBox="0 0 16 16">
+        <circle cx="8" cy="8" r="7" stroke="white"></circle>
+        <path clip-path="url(#rating-clip)" d="M0 16v-4.8h16 0v16z" fill="white"></path>
+      </svg>
+    </span>
+    {%- if sort_links %}{{ sort_order.rating }}</a>{% endif %}
+  </span>
+{% endblock %}
+
+{% block after_point %}
+  <td class="user-problem-count">{{ user.problem_count }}</td>
+  <td class="user-contribution">{{ user.contribution_points }}</td>
+  <td>
+    <div class="about-td">
+      {% if user.about %}{{ user.about|markdown(lazy_load=True)|reference|str|safe }}{% endif %}
+    </div>
+  </td>
+{% endblock %}

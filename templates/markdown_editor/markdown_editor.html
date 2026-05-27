@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block media %}
+  {% compress css %}
+    {{ form.media.css }}
+  {% endcompress %}
+  <style>
+    body {
+      overflow: hidden;
+    }
+    #content {
+      width: 100%;
+      height: calc(100vh - 50px);
+      margin-bottom: 0;
+      padding: 0;
+    }
+    #content-body {
+      padding: 0;
+      height: 100%;
+    }
+
+    @media (min-width: 800px) {
+      #content.wrapper {
+        padding: 0;
+        border-radius: 0;
+      }
+    }
+    .wmd-wrapper {
+      display: flex;
+      height: 100%;
+    }
+    .wmd-panel:first-child {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .wmd-input {
+      flex: 1;
+      width: 100%;
+      resize: none;
+      border: none;
+      padding: 15px;
+      overflow-y: auto;
+    }
+    div.dmmd-no-button:not(.dmmd-preview-has-content) {
+      display: block;
+    }
+    .wmd-preview {
+      flex: 1;
+      padding: 15px;
+      overflow-y: auto;
+      height: calc(100vh - 50px);
+      margin-top: 0;
+      border-radius: 0;
+    }
+
+    /* Hide the update preview button for cleaner interface */
+    .dmmd-preview-update {
+      display: none;
+    }
+  </style>
+{% endblock %}
+
+{% block js_media %}
+  {{ form.media.js }}
+{% endblock %}
+
+{% block title_row %}
+{% endblock %}
+
+{% block title_ruler %}
+{% endblock %}
+
+{% block body %}
+  <form method="post">
+    {% csrf_token %}
+    {{ form.body }}
+  </form>
+{% endblock %}

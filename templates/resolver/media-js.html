@@ -1,0 +1,464 @@
+{% compress js %}
+  <script src="{{ static('resolver.js') }}"></script>
+  <script type="text/javascript">
+    $(function () {
+      var data = {{ contest_json }};
+      var resolver = new ContestResolver(data);
+      var $table = $('#resolver-table');
+      var $tbody = $('#resolver-body');
+      var $overlay = $('#resolver-overlay');
+      var animationDuration = 400;
+
+  // ----------------------------------------------------------------
+  // Build table header
+  // ----------------------------------------------------------------
+      var $headerRow = $table.find('thead tr');
+      var $scoreHeader = $headerRow.find('.resolver-score-col');
+      var hasGroups = resolver.problems.some(function (p) { return p.group; });
+
+      if (hasGroups) {
+        $table.addClass('resolver-has-subtasks');
+        var $headerRow2 = $('<tr class="resolver-subtask-header"></tr>');
+
+        $headerRow.find('.resolver-rank-col').attr('rowspan', 2);
+        $headerRow.find('.resolver-user-col').attr('rowspan', 2);
+        $scoreHeader.attr('rowspan', 2);
+
+        var currentGroup = null;
+        var groupCount = 0;
+        var $groupTh = null;
+
+        for (var pi = 0; pi < resolver.problems.length; pi++) {
+          var p = resolver.problems[pi];
+          if (p.group) {
+            if (p.group !== currentGroup) {
+              if ($groupTh) {
+                $groupTh.attr('colspan', groupCount);
+                $scoreHeader.before($groupTh);
+              }
+              currentGroup = p.group;
+              groupCount = 1;
+              $groupTh = $('<th class="resolver-group-col"></th>').text(p.group)
+                .attr('title', p.code);
+            } else {
+              groupCount++;
+            }
+            $headerRow2.append(
+              $('<th class="resolver-problem-col"></th>').text(p.sublabel)
+                .attr('title', p.code + ' subtask ' + p.sublabel + ' (' + p.max_points + ')')
+            );
+          } else {
+            if ($groupTh) {
+              $groupTh.attr('colspan', groupCount);
+              $scoreHeader.before($groupTh);
+              $groupTh = null;
+              currentGroup = null;
+            }
+            var $th = $('<th class="resolver-problem-col" rowspan="2"></th>').text(p.label)
+              .attr('title', p.code + ' (' + p.max_points + ')');
+            $scoreHeader.before($th);
+          }
+        }
+        if ($groupTh) {
+          $groupTh.attr('colspan', groupCount);
+          $scoreHeader.before($groupTh);
+        }
+        $headerRow.after($headerRow2);
+      } else {
+        for (var pi = 0; pi < resolver.problems.length; pi++) {
+          var p = resolver.problems[pi];
+          var $th = $('<th class="resolver-problem-col"></th>').text(p.label)
+            .attr('title', p.code + ' (' + p.max_points + ')');
+          $scoreHeader.before($th);
+        }
+      }
+
+  // ----------------------------------------------------------------
+  // Build table rows
+  // ----------------------------------------------------------------
+      function buildRows() {
+        $tbody.empty();
+        var displayRanks = resolver.getDisplayRanks();
+        for (var ri = 0; ri < resolver.ranking.length; ri++) {
+          var user = resolver.users[resolver.ranking[ri]];
+          var $tr = $('<tr></tr>').attr('data-user-id', user.id);
+
+          $tr.append($('<td class="resolver-rank-cell"></td>').text(displayRanks[user.id]));
+
+          var $userCell = $('<td class="resolver-user-cell"></td>');
+          var $userLink = $('<span></span>').addClass(user.cssClass)
+            .append($('<a></a>').attr('href', '/user/' + user.username).text(user.username));
+          $userCell.append($userLink);
+          var $details = $('<div class="resolver-user-details"></div>');
+          if (user.displayName) {
+            $details.append($('<span class="resolver-real-name"></span>').text(user.displayName));
+          }
+          if (user.school) {
+            $details.append($('<span class="resolver-school"></span>').text(user.school));
+          }
+          $userCell.append($details);
+          $tr.append($userCell);
+
+          for (var pi = 0; pi < resolver.problems.length; pi++) {
+            var p = resolver.problems[pi];
+            var key = String(p.order);
+            var pd = user.problems[key];
+            var $td = $('<td class="resolver-cell"></td>')
+              .attr('data-problem', p.order)
+              .attr('data-user-id', user.id);
+
+            if (!pd || (pd.frozen === 0 && pd.final === 0)) {
+              $td.addClass('resolver-empty');
+              $td.text('-');
+            } else if (pd.revealed) {
+              var verdict = getVerdict(pd.final, p.max_points);
+              $td.addClass(verdict).text(formatScore(pd.final));
+            } else {
+              $td.addClass('frozen');
+              $td.html('<span class="frozen-score">' + formatScore(pd.frozen) + '</span> <span class="frozen-indicator">?</span>');
+            }
+        // Track merged sum/max/colspan on merged cells for subtask merging
+            if (p.mergedMaxTotal !== undefined) {
+              $td.attr('data-merged-sum', pd ? pd.final : 0);
+              $td.attr('data-merged-max', p.max_points);
+              $td.attr('colspan', 1);
+            }
+            $tr.append($td);
+          }
+
+          var $scoreCell = $('<td class="resolver-score-cell"></td>');
+          $scoreCell.append($('<span class="resolver-score-value"></span>').text(formatScore(user.currentTotal)));
+          if (resolver.showCumtime) {
+            $scoreCell.append($('<div class="resolver-solving-time"></div>').text(ContestResolver.formatCumtime(user.cumtime)));
+          }
+          $tr.append($scoreCell);
+
+          $tbody.append($tr);
+        }
+      }
+
+  // Problem lookup by order for merge logic
+      var problemByOrder = {};
+      for (var pi = 0; pi < resolver.problems.length; pi++) {
+        problemByOrder[resolver.problems[pi].order] = resolver.problems[pi];
+      }
+
+      function getVerdict(score, maxPoints) {
+        if (Math.abs(score - maxPoints) < 1e-9) return 'ac';
+        if (score > 1e-9) return 'partial';
+        return 'wrong';
+      }
+
+      function formatScore(score) {
+        if (score === Math.floor(score)) return String(Math.floor(score));
+        return score.toFixed(2).replace(/\.?0+$/, '');
+      }
+
+  // ----------------------------------------------------------------
+  // Apply a single operation to the DOM
+  // ----------------------------------------------------------------
+      function applyOp(op, callback) {
+        if (op.type === 'reveal') {
+          var $row = $tbody.find('tr[data-user-id="' + op.userId + '"]');
+          var $cell = $row.find('td[data-problem="' + op.problemOrder + '"]');
+
+          $row.addClass('resolver-row-active');
+          $cell.addClass('selected');
+          scrollToRow($row);
+
+          setTimeout(function () {
+            $cell.removeClass('frozen selected')
+              .addClass(op.verdict)
+              .addClass('cell-reveal-anim')
+              .html(formatScore(op.finalScore));
+
+            $row.find('.resolver-score-value').text(formatScore(op.newTotal));
+
+            setTimeout(function () {
+              $cell.removeClass('cell-reveal-anim');
+
+          // Merge into sum column if this is a hidden subtask with a merged column
+              var probInfo = problemByOrder[op.problemOrder];
+              if (probInfo && probInfo.mergedOrder !== undefined) {
+                var $mergedCell = $row.find('td[data-problem="' + probInfo.mergedOrder + '"]');
+                if ($mergedCell.length) {
+                  var curSum = parseFloat($mergedCell.attr('data-merged-sum')) || 0;
+                  var curMax = parseFloat($mergedCell.attr('data-merged-max')) || 0;
+                  var newSum = Math.round((curSum + op.finalScore) * 100) / 100;
+                  var newMax = Math.round((curMax + probInfo.max_points) * 100) / 100;
+                  $mergedCell.attr('data-merged-sum', newSum);
+                  $mergedCell.attr('data-merged-max', newMax);
+
+              // Grow merged cell and remove the eaten cell
+                  var curColspan = parseInt($mergedCell.attr('colspan')) || 1;
+                  $mergedCell.attr('colspan', curColspan + 1);
+                  $cell.remove();
+
+              // Update merged cell display
+                  $mergedCell.removeClass('ac partial wrong improved resolver-empty');
+                  $mergedCell.addClass(getVerdict(newSum, newMax))
+                    .text(formatScore(newSum))
+                    .addClass('cell-reveal-anim');
+                  setTimeout(function () { $mergedCell.removeClass('cell-reveal-anim'); }, animationDuration);
+                }
+              }
+
+              reorderRows(op, function () {
+                $row.removeClass('resolver-row-active');
+                if (callback) callback();
+              });
+            }, animationDuration);
+          }, animationDuration);
+          return;
+        }
+
+        if (op.type === 'show-overlay') {
+          var $row = $tbody.find('tr[data-user-id="' + op.userId + '"]');
+          $tbody.find('tr').removeClass('resolver-row-active resolver-rank-up');
+          $row.addClass('resolver-row-active');
+          scrollToRow($row);
+
+          var topN = parseInt($('#resolver-top-n').val()) || 3;
+          if (op.rank <= topN) {
+            setTimeout(function () {
+              $row.removeClass('resolver-row-active');
+              showOverlay(op);
+              if (resolver.autoPlaying) {
+                setTimeout(function () {
+                  hideOverlay();
+                  if (callback) callback();
+                }, 2500 / autoSpeed);
+              } else {
+                pendingOverlayCallback = callback;
+              }
+            }, animationDuration);
+          } else {
+            setTimeout(function () {
+              $row.removeClass('resolver-row-active');
+              if (callback) callback();
+            }, animationDuration);
+          }
+          return;
+        }
+
+        if (callback) callback();
+      }
+
+      function reorderRows(op, callback) {
+        var allRows = $tbody.find('tr');
+        var oldPositions = {};
+        allRows.each(function () {
+          var uid = $(this).attr('data-user-id');
+          oldPositions[uid] = $(this).offset().top;
+        });
+
+        var rows = {};
+        allRows.each(function () {
+          rows[$(this).attr('data-user-id')] = $(this);
+        });
+
+        var displayRanks = resolver.getDisplayRanks();
+        for (var ri = 0; ri < resolver.ranking.length; ri++) {
+          var uid = resolver.ranking[ri];
+          var $r = rows[uid];
+          if ($r) {
+            $r.find('.resolver-rank-cell').text(displayRanks[uid]);
+            $tbody.append($r);
+          }
+        }
+
+        var moveDuration = 600;
+        if (op.newRank < op.oldRank) {
+          $tbody.find('tr').each(function () {
+            var uid = $(this).attr('data-user-id');
+            var oldTop = oldPositions[uid];
+            if (oldTop === undefined) return;
+            var newTop = $(this).offset().top;
+            var delta = oldTop - newTop;
+            if (Math.abs(delta) > 1) {
+              $(this).css('transform', 'translateY(' + delta + 'px)');
+              this.offsetHeight;
+              $(this).css({
+                'transition': 'transform ' + moveDuration + 'ms ease',
+                'transform': 'translateY(0)'
+              });
+            }
+          });
+
+          var $movedRow = $tbody.find('tr[data-user-id="' + op.userId + '"]');
+          $tbody.find('tr').removeClass('resolver-rank-up');
+          $movedRow.addClass('resolver-rank-up');
+          scrollToRow($movedRow);
+          setTimeout(function () {
+            $tbody.find('tr').css({ 'transition': '', 'transform': '' });
+            if (callback) callback();
+          }, moveDuration);
+        } else {
+          if (callback) callback();
+        }
+      }
+
+      function scrollToRow($row) {
+        if ($row.length) {
+          var rowTop = $row.offset().top;
+          var windowHeight = $(window).height();
+          var scrollTarget = rowTop - windowHeight / 2 + $row.outerHeight() / 2;
+          $('html, body').animate({ scrollTop: Math.max(0, scrollTarget) }, 300);
+        }
+      }
+
+      function showOverlay(op) {
+        var user = resolver.users[op.userId];
+        var rank = op.rank || op.newRank;
+        $overlay.find('.resolver-overlay-rank').text('#' + rank);
+        $overlay.find('.resolver-overlay-username').text(user.username);
+        $overlay.find('.resolver-overlay-name').text(user.displayName);
+        $overlay.find('.resolver-overlay-school').text(user.school);
+        $overlay.removeAttr('hidden').addClass('resolver-overlay-visible');
+      }
+
+      function hideOverlay() {
+        $overlay.removeClass('resolver-overlay-visible');
+        setTimeout(function () { $overlay.attr('hidden', ''); }, 300);
+      }
+
+  // ----------------------------------------------------------------
+  // Controls
+  // ----------------------------------------------------------------
+      var isProcessing = false;
+      var pendingOverlayCallback = null;
+
+      function doNext() {
+        if (pendingOverlayCallback) {
+          var cb = pendingOverlayCallback;
+          pendingOverlayCallback = null;
+          hideOverlay();
+          cb();
+          return;
+        }
+        if (isProcessing) return;
+        if (!resolver.hasNext()) return;
+        isProcessing = true;
+        var op = resolver.next();
+        if (op) {
+          applyOp(op, function () { isProcessing = false; });
+        } else {
+          isProcessing = false;
+        }
+      }
+
+      $('#resolver-next').on('click', function () {
+        doNext();
+      });
+
+      var autoSpeed = 1;
+      $('#resolver-speed').on('input', function () {
+        autoSpeed = parseFloat($(this).val());
+        $('#resolver-speed-label').text(autoSpeed + 'x');
+        if (resolver.autoPlaying) {
+          resolver.stopAutoPlay();
+          startAuto();
+        }
+      });
+
+      function startAuto() {
+        $('#resolver-auto').find('i').removeClass('fa-play').addClass('fa-pause');
+
+        var step = function () {
+          if (!resolver.autoPlaying) return;
+          if (!resolver.hasNext()) {
+            stopAuto();
+            return;
+          }
+          isProcessing = true;
+          var op = resolver.next();
+          if (op) {
+            applyOp(op, function () {
+              isProcessing = false;
+              if (resolver.autoPlaying) {
+                resolver.autoTimer = setTimeout(step, 1200 / autoSpeed);
+              }
+            });
+          }
+        };
+        resolver.autoPlaying = true;
+        step();
+      }
+
+      function stopAuto() {
+        resolver.stopAutoPlay();
+        $('#resolver-auto').find('i').removeClass('fa-pause').addClass('fa-play');
+      }
+
+      function toggleAuto() {
+        if (resolver.autoPlaying) {
+          stopAuto();
+        } else {
+          startAuto();
+        }
+      }
+
+      $('#resolver-auto').on('click', toggleAuto);
+
+      $('#resolver-fullscreen').on('click', function () {
+        toggleFullscreen();
+      });
+
+      function toggleFullscreen() {
+        var el = document.querySelector('.resolver-page');
+        if (!document.fullscreenElement) {
+          if (el.requestFullscreen) el.requestFullscreen();
+        } else {
+          if (document.exitFullscreen) document.exitFullscreen();
+        }
+      }
+
+  // Cell click to reveal
+      $tbody.on('click', 'td.frozen', function () {
+        if (isProcessing || resolver.autoPlaying) return;
+        var userId = parseInt($(this).attr('data-user-id'));
+        var problemOrder = parseInt($(this).attr('data-problem'));
+        if (isNaN(userId) || isNaN(problemOrder)) return;
+
+        resolver.revealCell(userId, problemOrder);
+        doNext();
+      });
+
+  // Keyboard shortcuts
+      $(document).on('keydown', function (e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        if (e.key === ' ' || e.code === 'Space') {
+          e.preventDefault();
+          doNext();
+        } else if (e.key === 'a' || e.key === 'A') {
+          e.preventDefault();
+          toggleAuto();
+        } else if (e.key === 'f' || e.key === 'F') {
+          e.preventDefault();
+          toggleFullscreen();
+        }
+      });
+
+  // ----------------------------------------------------------------
+  // Real name / school toggle
+  // ----------------------------------------------------------------
+      function updateRealNameVisibility() {
+        var show = $('#resolver-show-real-name').is(':checked');
+        if (show) {
+          $tbody.find('.resolver-user-details').show();
+        } else {
+          $tbody.find('.resolver-user-details').hide();
+        }
+      }
+
+      $('#resolver-show-real-name').on('change', updateRealNameVisibility);
+
+  // ----------------------------------------------------------------
+  // Init
+  // ----------------------------------------------------------------
+      buildRows();
+      updateRealNameVisibility();
+    });
+  </script>
+{% endcompress %}

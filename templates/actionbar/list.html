@@ -1,0 +1,78 @@
+{% set logged_in = request.user.is_authenticated %}
+{% set profile = request.profile if logged_in else None %}
+{% set hide_texts_on_mobile = (not hide_actionbar_comment) or actionbar_report_url %}
+{% if logged_in %}
+  {% if include_hr %}
+    <hr>
+  {% endif %}
+  <div class="page-vote actionbar {{'hide_texts_on_mobile' if hide_texts_on_mobile}} ">
+    <span class="actionbar-block" style="justify-content: flex-start;">
+      {% if is_own_content %}
+        <span class="like-button actionbar-button disabled" title="{{ _('You cannot vote on your own content') }}">
+          <span class="pagevote-score" id="pagevote-score-{{pagevote.id}}">{{ pagevote.score }}</span>
+          <i class="far fa-thumbs-up" style="font-size: large;"></i>
+          <span class="actionbar-text">{{_("Like")}}</span>
+        </span>
+        <span class="dislike-button actionbar-button disabled" title="{{ _('You cannot vote on your own content') }}">
+          <i class="far fa-thumbs-down" style="font-size: large;"></i>
+        </span>
+      {% else %}
+        <span id="like-button-{{pagevote.id}}"
+              class="like-button actionbar-button {% if pagevote.vote_score(request.profile) == 1 %}voted{% endif %}"
+              onclick="javascript:pagevote_upvote({{ pagevote.id }}, event)">
+          <span class="pagevote-score" id="pagevote-score-{{pagevote.id}}">{{ pagevote.score }}</span>
+          <i class="far fa-thumbs-up" style="font-size: large;"></i>
+          <span class="actionbar-text">{{_("Like")}}</span>
+        </span>
+        <span id="dislike-button-{{pagevote.id}}"
+              class="dislike-button actionbar-button {% if pagevote.vote_score(request.profile) == -1 %}voted{% endif %}"
+              onclick="javascript:pagevote_downvote({{ pagevote.id }}, event)">
+          <i class="far fa-thumbs-down" style="font-size: large;"></i>
+        </span>
+      {% endif %}
+    </span>
+    {% if not hide_actionbar_comment %}
+      <span class="actionbar-block">
+        <span class="actionbar-button actionbar-comment"
+              {% if actionbar_content_type_id %}
+                data-content-type-id="{{ actionbar_content_type_id }}"
+                data-object-id="{{ actionbar_object_id }}"
+                onclick="toggle_inline_comments(this, event)"
+              {% endif %}>
+          <i class="far fa-comment" style="font-size: large;"></i>
+          <span class="actionbar-text">
+            {{_("Comment")}}
+          </span>
+          <span class="actionbar-comment-count">
+            {% if all_comment_count %}
+              {{ all_comment_count }}
+            {% endif %}
+          </span>
+        </span>
+      </span>
+    {% endif %}
+    <span class="actionbar-block">
+      <span id="bookmark-button-{{bookmark.id}}"
+            class="bookmark-button actionbar-button {% if bookmark.is_bookmarked_by(request.profile) %} bookmarked {% endif %}"
+            onclick="javascript:bookmark({{ bookmark.id }}, event)">
+        <i class="far fa-bookmark" style="font-size: large;"></i>
+        <span class="actionbar-text">{{_("Bookmark")}}</span>
+      </span>
+    </span>
+    <span class="actionbar-block">
+      <span class="actionbar-button actionbar-share" style="position: relative"
+            {{"share-url=" + share_url if share_url else ""}} onclick="javascript:actionbar_share(this, event)">
+        <i class=" fa fa-share" style="font-size: large;"></i>
+        <span class="actionbar-text">{{_("Share")}}</span>
+      </span>
+    </span>
+    {% if actionbar_report_url %}
+      <span class="actionbar-block">
+        <a class="actionbar-button black" href="{{actionbar_report_url}}">
+          <i class="fa fa-flag" style="font-size: large;"></i>
+          <span class="actionbar-text">{{_("Report")}}</span>
+        </a>
+      </span>
+    {% endif %}
+  </div>
+{% endif %}

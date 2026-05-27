@@ -1,0 +1,126 @@
+{% extends "user/base-users-table.html" %}
+
+{% block before_rows %}
+  {% if my_profile %}
+    {% set user = my_profile %}
+    <tr class="highlight pinned-row">
+      <td class="rank-td">{{ my_rank }}</td>
+      {% if has_rating %}
+        <td class="rating-column">{% if user.participation_rating %}{{ rating_number(user.participation_rating) }}{% endif %}</td>
+      {% endif %}
+      <td class="user-name">
+        <div style="display: inline-block; max-width: 25em;">
+          {{ link_user(user.user, show_image=True) }}
+        </div>
+      </td>
+      <th class="full-name" style="display:none;"></th>
+      <th style="display:none;"></th>
+      {{ user.result_cell }}
+      {% for cell in user.problem_cells %}
+        {{ cell }}
+      {% endfor %}
+    </tr>
+  {% endif %}
+{% endblock %}
+
+{% block rank_cell %}
+  {{ rank }}{% if global_ranks and user.id in global_ranks %} <span class="gray" style="font-size:0.8em">({{ global_ranks[user.id] }})</span>{% endif %}
+{% endblock %}
+
+{% block after_rank_head %}
+  {% if has_rating %}
+    <th class="rating-column">{{ _('Rating') }}</th>
+  {% endif %}
+{% endblock %}
+
+{% block after_rank %}
+  {% if has_rating %}
+    <td class="rating-column">{% if user.participation_rating %}{{ rating_number(user.participation_rating) }}{% endif %}
+    </td>
+  {% endif %}
+{% endblock %}
+
+{% block user_footer %}
+  {% set profile = user.user %}
+  {% if profile.first_name %}
+    <div style="display: none" class="user-table-fullname fullname gray">
+      {{ profile.first_name }}
+    </div>
+  {% endif %}
+  {% if profile.last_name %}
+    <div class="school gray user-table-fullname" style="display: none">
+      {{ profile.last_name }}
+    </div>
+  {% endif %}
+{% endblock %}
+
+{% block user_link %}
+  {{ link_user(user.user, show_image=True) }}
+{% endblock %}
+
+{% block user_data %}
+  {% if user.participation.virtual %}
+    <sub class="gray">[{{user.participation.virtual}}]</sub>
+  {% endif %}
+  {% if can_edit %}
+    <span class="contest-participation-operation">
+      <form action="{{ url('contest_participation_disqualify', contest.key) }}" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="participation" value="{{ user.participation.id }}">
+        {% if user.participation.is_disqualified %}
+          <a href="#" title="{{ _('Un-Disqualify') }}" class="un-disqualify-participation"><i
+            class="fa fa-undo fa-fw"></i></a>
+        {% else %}
+          <a href="#" title="{{ _('Disqualify') }}" class="disqualify-participation"><i class="fa fa-trash fa-fw"></i></a>
+        {% endif %}
+      </form>
+      {% if perms.judge.change_contestparticipation %}
+        <a href="{{ url('admin:judge_contestparticipation_change', user.participation.id) }}" title="{{ _('Admin') }}"
+           class="edit-participation"><i class="fa fa-cog fa-fw"></i></a>
+      {% endif %}
+    </span>
+  {% endif %}
+{% endblock %}
+
+{% block before_point_head %}
+  <th class="full-name" style="display:none;">{{ _('Fullname') }}</th>
+  <th style="display:none;">{{ _('School') }}</th>
+{% endblock %}
+
+{% block after_point_head %}
+  {% for problem in problems %}
+    {% if problem.problem %}
+      <th class="points header problem-score-col" title="{{ problem.problem.name }}"><a
+        href="{{ url('problem_detail', problem.problem.code) }}">
+        {{- contest.get_label_for_problem(loop.index0) }}
+        <div class="point-denominator">{{ problem.points }}</div>
+        <div class="problem-code" style="display: none;">{{ problem.problem.code }}</div>
+      </a></th>
+    {% elif problem.quiz %}
+      <th class="points header problem-score-col quiz-col" title="{{ problem.quiz.title }}"><a
+        href="{{ url('quiz_detail', problem.quiz.code) }}">
+        {{- contest.get_label_for_problem(loop.index0) }}
+        <div class="point-denominator">{{ problem.points }}</div>
+        <div class="problem-code" style="display: none;">quiz_{{ problem.quiz.id }}</div>
+      </a></th>
+    {% endif %}
+  {% endfor %}
+{% endblock %}
+
+{% block row_extra %}
+  class="{{ 'disqualified' if user.participation.is_disqualified }} {{'highlight' if user.id == request.profile.id}}" data-id="{{ user.id }}"
+{% endblock %}
+
+{% block before_point %}
+{# Empty - we'll use the default point cell #}
+{% endblock %}
+
+{% block point %}
+  {{ user.result_cell }}
+{% endblock %}
+
+{% block after_point %}
+  {% for cell in user.problem_cells %}
+    {{ cell }}
+  {% endfor %}
+{% endblock %}

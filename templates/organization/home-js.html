@@ -1,0 +1,67 @@
+<script type="text/javascript">
+  function confirmLeaveOrganization() {
+    $('.leave-organization').click(function () {
+      if (confirm('{{ _('Are you sure you want to leave this group?') }}\n' +
+        {% if organization.is_open %}
+          '{{ _('You will have to rejoin to show up on the group leaderboard.') }}'
+        {% else %}
+          '{{ _('You will have to request membership in order to join again.') }}'
+        {% endif %}
+      )) {
+        $(this).parent().submit();
+      }
+    });
+  }
+  function confirmBlockOrganization(button) {
+    const confirmationMessage =
+      '{{ _("Are you sure you want to block this group?") }}\n' +
+    `{% if is_member %}` +
+    '{{ _("You will leave this group and have to remove block to rejoin.") }}' +
+    `{% else %}` +
+    '{{ _("You will have to remove block to join this group.") }}' +
+    `{% endif %}`;
+
+    if (confirm(confirmationMessage)) {
+      button.closest('form').submit();
+    }
+  }
+  function confirmUnblockOrganization(button) {
+    const confirmationMessage =
+      '{{ _("Are you sure you want to unblock this group?") }}\n';
+
+    if (confirm(confirmationMessage)) {
+      button.closest('form').submit();
+    }
+  }
+  $(function () {
+    $('.time-remaining').each(function () {
+      count_down($(this));
+    });
+  });
+
+  function copyInviteLink(e) {
+    e.preventDefault();
+    var link = document.getElementById('invite-link').value;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(link).then(function () {
+        var text = document.getElementById('copy-invite-text');
+        var original = text.textContent;
+        text.textContent = '{{ _("Copied!") }}';
+        setTimeout(function () { text.textContent = original; }, 2000);
+      }).catch(function () {
+        prompt('{{ _("Copy this invite link:") }}', link);
+      });
+    } else {
+      prompt('{{ _("Copy this invite link:") }}', link);
+    }
+  }
+
+  $(document).ready(function () {
+    $('.block-organization').on('click', function () {
+      confirmBlockOrganization(this);
+    });
+    $('.unblock-organization').on('click', function () {
+      confirmUnblockOrganization(this);
+    });
+  });
+</script>

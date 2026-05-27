@@ -1,0 +1,158 @@
+{% extends "course/base.html" %}
+
+{% block two_col_media %}
+  <link rel="stylesheet" href="{{ static('course.css') }}">
+{% endblock %}
+
+{% block js_media %}
+  <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.min.js"></script>
+  <script>
+    $(function() {
+      function initSortable(listId, action, statusId) {
+        var $list = $('#' + listId);
+        var $status = $('#' + statusId);
+
+        if ($list.length === 0) return;
+
+        $list.sortable({
+          handle: '.drag-handle',
+          update: function() {
+          // Update visual order numbers
+            $list.find('.sortable-item').each(function(index) {
+              $(this).find('.item-order').text((index + 1) + '.');
+            });
+
+          // Collect new order
+            var orderData = [];
+            $list.find('.sortable-item').each(function() {
+              orderData.push($(this).data('id'));
+            });
+
+          // Save to server
+            $status.html('<i class="fa fa-spinner fa-spin"></i> {{ _("Saving...") }}').removeClass('success error').show();
+
+            $.post('', {
+              'action': 'reorder_contests',
+              'order_data': JSON.stringify(orderData),
+              'csrfmiddlewaretoken': $('input[name=csrfmiddlewaretoken]').val()
+            }, function(response) {
+              if (response.success) {
+                $status.html('<i class="fa fa-check"></i> {{ _("Saved") }}').addClass('success');
+                setTimeout(function() {
+                  $status.fadeOut();
+                }, 2000);
+              } else {
+                $status.html('<i class="fa fa-exclamation-triangle"></i> ' + response.error).addClass('error');
+              }
+            }).fail(function() {
+              $status.html('<i class="fa fa-exclamation-triangle"></i> {{ _("Error saving") }}').addClass('error');
+            });
+          }
+        });
+      }
+
+      initSortable('sortable-contests', 'reorder_contests', 'contests-save-status');
+
+      // Inline points editor — co-located with the contest list so course
+      // teachers don't have to open the full edit form just to bump points.
+      var originalPointsValue = null;
+      var $statusInline = $('#contests-save-status');
+      var csrfToken = $('input[name=csrfmiddlewaretoken]').val();
+
+      $(document).on('focus', '.inline-points-edit', function() {
+        originalPointsValue = $(this).val();
+      });
+
+      $(document).on('keydown', '.inline-points-edit', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          $(this).blur();
+        } else if (e.key === 'Escape') {
+          $(this).val(originalPointsValue).blur();
+        }
+      });
+
+      $(document).on('change blur', '.inline-points-edit', function() {
+        var $input = $(this);
+        var points = $input.val();
+        var ccId = $input.data('cc-id');
+
+        if (points === originalPointsValue) return;
+        if (points === '' || parseInt(points, 10) < 0 || isNaN(parseInt(points, 10))) {
+          $input.val(originalPointsValue).addClass('error');
+          setTimeout(function() { $input.removeClass('error'); }, 1500);
+          return;
+        }
+
+        $statusInline.html('<i class="fa fa-spinner fa-spin"></i> {{ _("Saving...") }}')
+          .removeClass('success error').show();
+
+        $.post('', {
+          'action': 'update_points',
+          'cc_id': ccId,
+          'points': points,
+          'csrfmiddlewaretoken': csrfToken
+        }).done(function(response) {
+          if (response.success !== false) {
+            $input.removeClass('error').addClass('saved');
+            setTimeout(function() { $input.removeClass('saved'); }, 800);
+            originalPointsValue = points;
+            $statusInline.html('<i class="fa fa-check"></i> {{ _("Saved") }}').addClass('success');
+            setTimeout(function() { $statusInline.fadeOut(); }, 1500);
+          } else {
+            $input.val(originalPointsValue).addClass('error');
+            setTimeout(function() { $input.removeClass('error'); }, 1500);
+            $statusInline.html('<i class="fa fa-exclamation-triangle"></i> ' + (response.error || '{{ _("Error saving") }}'))
+              .addClass('error');
+          }
+        }).fail(function() {
+          $input.val(originalPointsValue).addClass('error');
+          setTimeout(function() { $input.removeClass('error'); }, 1500);
+          $statusInline.html('<i class="fa fa-exclamation-triangle"></i> {{ _("Error saving") }}').addClass('error');
+        });
+      });
+    });
+  </script>
+{% endblock %}
+
+{% block middle_content %}
+  <center>
+    <h2>{{content_title}}</h2>
+  </center>
+
+  <div class="edit-lessons-page order-tab">
+    {% csrf_token %}
+    <div class="add-button-container" style="margin-bottom: 1em;">
+      <a href="{{url('add_course_contest', course.slug)}}" class="action-btn background-green large">{{ _('Add') }}</a>
+    </div>
+    {% if course_contests %}
+      <ul id="sortable-contests" class="sortable-list">
+        {% for cc in course_contests %}
+          <li class="sortable-item" data-id="{{ cc.id }}">
+            <span class="drag-handle"><i class="fa fa-bars"></i></span>
+            <span class="item-order">{{ loop.index }}.</span>
+            <span class="item-title">
+              <a href="{{url('contest_view', cc.contest.key)}}" target="_blank">{{ cc.contest.name }}</a>
+            </span>
+            <span class="item-meta">
+              <input type="number" class="inline-points-edit"
+                     data-cc-id="{{ cc.id }}"
+                     value="{{ cc.points }}"
+                     min="0" step="1"
+                     aria-label="{{ _('Points') }}">
+              <span class="points-suffix">{{ _('p') }}</span>
+            </span>
+            <span class="item-actions">
+              <a href="{{url('contest_edit', cc.contest.key)}}" class="action-btn small" title="{{ _('Edit') }}">
+                <i class="fa fa-pencil"></i> {{ _('Edit') }}
+              </a>
+            </span>
+          </li>
+        {% endfor %}
+      </ul>
+      <div id="contests-save-status" class="save-status"></div>
+    {% else %}
+      <p style="text-align: center;">{{_("No contests available")}}</p>
+    {% endif %}
+  </div>
+{% endblock %}

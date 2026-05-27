@@ -1,0 +1,70 @@
+@use "vars" as *;
+
+.table {
+    border-spacing: 0;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    margin-bottom: 0.5em;
+    background: rgba(0, 0, 0, 0.01);
+
+    &.striped tr:nth-child(even) {
+        background: $background_light_gray;
+    }
+
+    &.striped tr:nth-child(odd) {
+        background: $surface-primary;
+    }
+
+    &.no-border {
+        td, th {
+            border: none;
+        }
+    }
+
+    th:first-child, td:first-child {
+        border-width: 1px 1px 0 1px;
+    }
+
+    tr:last-child td {
+        border-bottom: 1px solid $border_gray;
+    }
+
+    thead th {
+        vertical-align: middle;
+    }
+
+    th {
+        height: 2em;
+        color: $text-on-primary;
+        background-color: $theme_color;
+        border-color: $border_gray;
+        border-width: 1px 1px 0 0;
+        border-style: solid;
+        padding: 4px 10px;
+        vertical-align: middle;
+        text-align: center;
+        font-weight: 600;
+        font-size: 1.1em;
+    }
+
+    td {
+        border-color: $border_gray;
+        border-width: 1px 1px 0 0;
+        border-style: solid;
+        padding: 7px 5px;
+        vertical-align: middle;
+        text-align: center;
+        overflow-wrap: break-word;
+    }
+}
+
+#users-table th a {
+    color: $text-on-primary;
+}
+
+.feed-table {
+    td, td:first-child, tr:last-child td, tr:last-child td:first-child {
+        border-width: 1px 0 0 0;
+    }
+}

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block js_media %}
+  {% include "comments/media-js.html" %}
+  {% include "actionbar/media-js.html" %}
+{% endblock %}
+
+{% block media %}
+  {% include "comments/media-css.html" %}
+{% endblock %}
+
+{% block title_row %}
+{% endblock %}
+
+{% block title_ruler %}
+{% endblock %}
+
+{% block body %}
+  <div class="post-full">
+    <div class="post-title">{{ title }}</div>
+    <div class="post-header">
+      <div class="post-meta">
+        <div class="post-info">
+          {% with authors=post.get_authors() %}
+            {% if authors %}
+              <img class="user-img" style="width: 1.5em; height: 1.5em;" src="{{ gravatar(authors[0].id, 48) }}" loading="lazy">
+              <span class="post-authors">{{ link_users(authors) }}</span>
+            {% endif %}
+          {% endwith %}
+          {% if organizations %}
+            <span class="post-separator">•</span>
+            <div class="post-organizations">
+              {% for org in organizations %}
+                {% with edit_url = url('edit_organization_blog', org.id , org.slug , post.id) if org in editable_orgs else None %}
+                  {% include "organization/tag.html" %}
+                {% endwith %}
+              {% endfor %}
+            </div>
+          {% endif %}
+          <span class="post-separator">•</span>
+          <span class="post-time">
+            <i class="fa fa-clock"></i>
+            {{ post.publish_on|date(_("N j, Y, g:i a")) }}
+          </span>
+        </div>
+      </div>
+      {% if post.is_editable_by(request.user) or editable_orgs %}
+        <div class="post-actions">
+          {% if editable_orgs %}
+            <a href="{{ url('edit_organization_blog', editable_orgs[0].id, editable_orgs[0].slug, post.id) }}" class="post-action-btn">
+              <i class="fa fa-edit"></i> {{ _('Edit') }}
+            </a>
+          {% elif post.is_editable_by(request.user) %}
+            <a href="{{ url('edit_blog_post', post.id, post.slug) }}" class="post-action-btn">
+              <i class="fa fa-edit"></i> {{ _('Edit') }}
+            </a>
+          {% endif %}
+          {% if post.is_editable_by(request.user) %}
+            <a href="{{ url('blog_post_ticket_list', post.id) }}" class="post-action-btn">
+              <i class="fa fa-clipboard-list"></i> {{ _('Tickets') }}
+              {% if num_open_tickets %}<span class="badge">{{ num_open_tickets }}</span>{% endif %}
+            </a>
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="body content-description">
+      {{ post.content|markdown|reference|str|safe}}
+    </div>
+    {% if request.user.is_authenticated and not request.profile.mute %}
+      {% set actionbar_report_url = url('new_blog_post_ticket', post.id) %}
+    {% endif %}
+    {% include "actionbar/list.html" %}
+    {% include "comments/list.html" %}
+  </div>
+{% endblock %}

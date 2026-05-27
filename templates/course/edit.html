@@ -1,0 +1,59 @@
+{% extends "course/base.html" %}
+
+{% block two_col_media %}
+  {{ form.media.css }}
+  <link rel="stylesheet" href="{{ static('course.css') }}">
+{% endblock %}
+
+{% block js_media %}
+  {{ form.media.js }}
+  <script>
+    $(function() {
+      $('select').each(function() {
+        var selectedValues = $(this).val();
+
+        $(this).select2();
+
+        $(this).val(selectedValues);
+      });
+    });
+  </script>
+{% endblock %}
+
+{% block middle_content %}
+  <div class="course-edit-page">
+    <center><h2>{{content_title}}</h2></center>
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+
+      <div class="form-container">
+        {% if form.errors %}
+          <div class="alert alert-danger alert-dismissable">
+            <a href="#" class="close">x</a>
+            {{ _("Please fix below errors") }}
+          </div>
+        {% endif %}
+
+        {% for field in form %}
+          {% if field %}
+            <div class="form-field-wrapper">
+              {{ field.errors }}
+              <label for="{{ field.id_for_label }}"><b>{{ field.label }}{% if field.field.required %}<span class="red"> * </span>{% endif %}:</b> </label>
+              <div class="org-field-wrapper field-{{ field.name }}" id="org-field-wrapper-{{ field.html_name }}">
+                {{ field }}
+              </div>
+              {% if field.help_text %}
+                <small class="org-help-text"><i class="fa fa-exclamation-circle"></i> {{ field.help_text|safe }}</small>
+              {% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+        <hr/>
+      </div>
+
+      <div class="form-actions">
+        <input type="submit" value="{{ _('Save') }}" class="action-btn">
+      </div>
+    </form>
+  </div>
+{% endblock %}

@@ -1,0 +1,73 @@
+{% extends "two-column-content.html" %}
+
+{% block js_media %}
+  {{ form.media.js }}
+  <script>
+    $(document).ready(function() {
+      // Auto-generate slug from name only if slug is empty
+      $('#id_name').on('input', function() {
+        var slugField = $('#id_slug');
+        if (!slugField.val()) {
+          var name = $(this).val();
+          var slug = name.toLowerCase()
+            .replace(/[^\w\s-]/g, '') // Remove special characters
+            .replace(/\s+/g, '-')      // Replace spaces with -
+            .replace(/--+/g, '-')      // Replace multiple - with single -
+            .trim();
+          slugField.val(slug);
+        }
+      });
+    });
+  </script>
+{% endblock %}
+
+{% block two_col_media %}
+  {{ form.media.css }}
+  <link rel="stylesheet" href="{{ static('course.css') }}">
+{% endblock %}
+
+{% block left_sidebar %}
+  {% include "course/list_left_sidebar.html" %}
+{% endblock %}
+
+{% block middle_content %}
+  <div class="course-create-page">
+    <center><h2>{{ title }}</h2></center>
+
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+
+      <div class="form-container">
+        {% if form.errors %}
+          <div class="alert alert-danger alert-dismissable">
+            <a href="#" class="close">x</a>
+            {{ _("Please fix below errors") }}
+          </div>
+        {% endif %}
+
+        {% for field in form %}
+          {% if field %}
+            <div class="form-field-wrapper">
+              {{ field.errors }}
+              <label for="{{ field.id_for_label }}"><b>{{ field.label }}{% if field.field.required %}<span class="red"> * </span>{% endif %}:</b> </label>
+              <div class="org-field-wrapper field-{{ field.name }}" id="org-field-wrapper-{{ field.html_name }}">
+                {{ field }}
+              </div>
+              {% if field.help_text %}
+                <small class="org-help-text"><i class="fa fa-exclamation-circle"></i> {{ field.help_text|safe }}</small>
+              {% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+        <hr/>
+      </div>
+
+      <div class="form-actions">
+        <input type="submit" value="{{ _('Create Course') }}" class="action-btn">
+        <a href="{{ url('course_list') }}" class="action-btn">
+          {{ _('Cancel') }}
+        </a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

@@ -1,0 +1,599 @@
+{% extends "problem/edit_base.html" %}
+{% set page_type = 'content' %}
+
+{% block js_media %}
+  {{ form.media.js }}
+  <script src="{{ static('jquery-ui.min.js') }}"></script>
+  <script src="{{ static('problem_form.js') }}"></script>
+  <script type="text/javascript">
+    $(document).ready(function() {
+    // Initialize shared problem form utilities
+      initializeProblemForm();
+
+      // Poll for markdown improvement task result
+      function pollMarkdownTask(taskId, $btn, $status) {
+        var pollInterval = setInterval(function() {
+          $.ajax({
+            url: '{{ url('task_status_ajax') }}?id=' + taskId,
+            type: 'GET',
+            success: function(data) {
+              if (data.code === 'SUCCESS') {
+                clearInterval(pollInterval);
+                $btn.prop('disabled', false);
+
+                if (data.success && data.improved_markdown) {
+                  $('#improved-markdown-result').show();
+                  $('#improved-markdown-content').val(data.improved_markdown);
+                  $status.text('{{ _('Markdown improved!') }}').css('color', 'green');
+                } else if (data.error) {
+                  $status.text('{{ _('Error: ') }}' + data.error).css('color', 'red');
+                } else {
+                  $status.text('{{ _('No improvements needed') }}').css('color', 'orange');
+                }
+
+                setTimeout(function() {
+                  $status.text('').css('color', '#666');
+                }, 5000);
+              } else if (data.code === 'FAILURE') {
+                clearInterval(pollInterval);
+                $btn.prop('disabled', false);
+                $status.text('{{ _('Error: ') }}' + (data.error || 'Task failed')).css('color', 'red');
+              }
+            },
+            error: function() {
+              clearInterval(pollInterval);
+              $btn.prop('disabled', false);
+              $status.text('{{ _('Network error occurred') }}').css('color', 'red');
+            }
+          });
+        }, 2000);
+      }
+
+      // Poll for tagging task result
+      function pollTagTask(taskId, $btn, $status) {
+        var pollInterval = setInterval(function() {
+          $.ajax({
+            url: '{{ url('task_status_ajax') }}?id=' + taskId,
+            type: 'GET',
+            success: function(data) {
+              if (data.code === 'SUCCESS') {
+                clearInterval(pollInterval);
+                $btn.prop('disabled', false);
+
+                if (data.success && data.is_valid) {
+                  // Update form fields with AI predictions
+                  if (data.predicted_points) {
+                    $('#{{ form.points.id_for_label }}').val(data.predicted_points);
+                  }
+
+                  if (data.predicted_types && data.predicted_types.length > 0) {
+                    var $typesSelect = $('#{{ form.types.id_for_label }}');
+                    var currentValues = $typesSelect.val() || [];
+
+                    data.predicted_types.forEach(function(type) {
+                      // Handle both {id, name} objects and plain IDs
+                      var typeId = type.id !== undefined ? type.id : type;
+                      var typeIdStr = String(typeId);
+
+                      if (currentValues.indexOf(typeIdStr) === -1) {
+                        currentValues.push(typeIdStr);
+                      }
+                    });
+
+                    $typesSelect.val(currentValues).trigger('change');
+                  }
+
+                  $status.text('{{ _('Problem-tag analysis completed successfully!') }}').css('color', 'green');
+                } else if (data.success && !data.is_valid) {
+                  var reason = data.reason || '{{ _('Problem format is incomplete') }}';
+                  $status.text('{{ _('Could not analyze: ') }}' + reason).css('color', 'orange');
+                } else if (data.error) {
+                  $status.text('{{ _('Error: ') }}' + data.error).css('color', 'red');
+                }
+
+                setTimeout(function() {
+                  $status.text('').css('color', '#666');
+                }, 5000);
+              } else if (data.code === 'FAILURE') {
+                clearInterval(pollInterval);
+                $btn.prop('disabled', false);
+                $status.text('{{ _('Error: ') }}' + (data.error || 'Task failed')).css('color', 'red');
+              }
+            },
+            error: function() {
+              clearInterval(pollInterval);
+              $btn.prop('disabled', false);
+              $status.text('{{ _('Network error occurred') }}').css('color', 'red');
+            }
+          });
+        }, 2000);
+      }
+
+      // Handle Auto Improve Markdown button click
+      $('#improve-markdown-btn').click(function() {
+        var $btn = $(this);
+        var $status = $('#improve-markdown-status');
+        var problemCode = $('#id_code').val();
+
+        if (!problemCode) {
+          alert('{{ _('Please enter a problem code first.') }}');
+          return;
+        }
+
+        // Disable button and show loading
+        $btn.prop('disabled', true);
+        $status.text('{{ _('Improving markdown...') }}');
+
+        // Get current description from editor (not from DB)
+        var currentDescription = $('#wmd-input-{{ form.description.id_for_label }}').val() || '';
+
+        $.ajax({
+          url: '{{ url("problem_edit", problem=problem.code) }}',
+          type: 'POST',
+          data: {
+            'improve_markdown': '1',
+            'problem_code': problemCode,
+            'description': currentDescription,
+            'csrfmiddlewaretoken': $('[name=csrfmiddlewaretoken]').val()
+          },
+          success: function(data) {
+            if (data.success && data.task_id) {
+              $status.text('{{ _('Processing... please wait') }}').css('color', '#666');
+              pollMarkdownTask(data.task_id, $btn, $status);
+            } else if (data.error) {
+              $status.text('{{ _('Error: ') }}' + data.error).css('color', 'red');
+              $btn.prop('disabled', false);
+            }
+          },
+          error: function(xhr, status, error) {
+            $status.text('{{ _('Network error occurred') }}').css('color', 'red');
+            $btn.prop('disabled', false);
+          }
+        });
+      });
+
+      // Copy to clipboard
+      $('#improved-markdown-copy').click(function() {
+        var $content = $('#improved-markdown-content');
+        $content.select();
+        document.execCommand('copy');
+        $(this).text('{{ _('Copied!') }}');
+        setTimeout(function() {
+          $('#improved-markdown-copy').text('{{ _('Copy') }}');
+        }, 2000);
+      });
+
+      // Insert improved markdown into editor
+      $('#improved-markdown-insert').click(function() {
+        var content = $('#improved-markdown-content').val();
+        // PageDown wraps the textarea with wmd-input-{id} format
+        var $description = $('#wmd-input-{{ form.description.id_for_label }}');
+        if ($description.length) {
+          $description.val(content);
+          // Trigger input event to update PageDown preview
+          $description.trigger('input').trigger('change');
+          $('#improve-markdown-status').text('{{ _('Inserted into editor!') }}').css('color', 'green');
+        }
+      });
+
+      // Setup Use Template button
+      setupUseTemplateButton('{{ form.description.id_for_label }}', '{{ _("This will replace the current description. Continue?") }}');
+
+      // Handle Request Public button click
+      $('#request-public-btn').click(function() {
+        var $btn = $(this);
+        var $status = $('#request-public-status');
+
+        if (!confirm('{{ _("Are you sure you want to request this problem to be made public?") }}')) {
+          return;
+        }
+
+        $btn.prop('disabled', true);
+
+        $.ajax({
+          url: '{{ url("internal_request_public") }}',
+          type: 'POST',
+          data: {
+            'id': '{{ problem.id }}',
+            'csrfmiddlewaretoken': $('[name=csrfmiddlewaretoken]').val()
+          },
+          success: function(data) {
+            if (data.success) {
+              location.reload();
+            } else {
+              $status.text(data.error || '{{ _("An error occurred.") }}').css('color', 'red');
+              $btn.prop('disabled', false);
+            }
+          },
+          error: function() {
+            $status.text('{{ _("Network error occurred") }}').css('color', 'red');
+            $btn.prop('disabled', false);
+          }
+        });
+      });
+
+      // Handle AI tagging button click
+      $('#tag-btn').click(function() {
+        var $btn = $(this);
+        var $status = $('#tag-status');
+        var problemCode = $('#id_code').val();
+
+        if (!problemCode) {
+          alert('{{ _('Please enter a problem code first.') }}');
+          return;
+        }
+
+        // Disable button and show loading
+        $btn.prop('disabled', true);
+        $status.text('{{ _('Analyzing problem...') }}');
+
+        $.ajax({
+          url: '{{ url("problem_edit", problem=problem.code) }}',
+          type: 'POST',
+          data: {
+            'problem_tag': '1',
+            'problem_code': problemCode,
+            'csrfmiddlewaretoken': $('[name=csrfmiddlewaretoken]').val()
+          },
+          success: function(data) {
+            if (data.success && data.task_id) {
+              $status.text('{{ _('Processing... please wait') }}').css('color', '#666');
+              pollTagTask(data.task_id, $btn, $status);
+            } else if (data.error) {
+              $status.text('{{ _('Error: ') }}' + data.error).css('color', 'red');
+              $btn.prop('disabled', false);
+            }
+          },
+          error: function(xhr, status, error) {
+            $status.text('{{ _('Network error occurred') }}').css('color', 'red');
+            $btn.prop('disabled', false);
+          }
+        });
+      });
+    });
+  </script>
+{% endblock %}
+
+{% block edit_content %}
+  <div class="problem-edit-form">
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+
+      {% if is_restricted %}
+        <div class="alert alert-info">
+          <i class="fa fa-lock"></i>
+          {{ _('Some fields are locked because this problem is public. Contact an admin to modify them.') }}
+        </div>
+      {% endif %}
+
+      {% if form.non_field_errors() %}
+        <div class="alert alert-danger">
+          {% for error in form.non_field_errors() %}
+            <p>{{ error }}</p>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <!-- Tab Navigation -->
+      <div class="tab-navigation">
+        <button class="tab-button active" id="tab-content" data-target="#pane-content">{{ _('Content') }}</button>
+        <button class="tab-button" id="tab-metadata" data-target="#pane-metadata">{{ _('Metadata') }}</button>
+      </div>
+
+      <!-- Tab Content -->
+      <div class="tab-content">
+        <!-- Content Tab -->
+        <div class="tab-pane active" id="pane-content">
+          <div class="form-row">
+            <label for="{{ form.code.id_for_label }}"><b>{{ _('Problem Code') }}{% if form.code.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.code }}
+            {% if form.code.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.code.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="form-row">
+            <label for="{{ form.name.id_for_label }}"><b>{{ _('Problem Name') }}{% if form.name.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.name }}
+            {% if form.name.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.name.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="form-row checkbox-field">
+            <label for="{{ form.is_public.id_for_label }}"><b>{{ form.is_public.label }}{% if form.is_public.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.is_public }}
+          </div>
+
+          {% if not problem.is_public or problem.is_organization_private %}
+            <div class="form-row" id="request-public-section">
+              {% if public_request and public_request.status == 'P' %}
+                <div class="alert alert-info" style="margin: 0;">
+                  <i class="fa fa-clock"></i> {{_("Public request is pending review.")}}
+                </div>
+              {% elif public_request and public_request.status == 'R' %}
+                <div class="alert alert-danger" style="margin: 0;">
+                  <i class="fa fa-times-circle"></i> {{_("Public request was rejected.")}}
+                  {% if public_request.feedback %}
+                    <div style="margin-top: 0.5em; padding-top: 0.5em;">
+                      <b>{{_("Feedback:")}}</b> {{ public_request.feedback }}
+                    </div>
+                  {% endif %}
+                  <div style="margin-top: 0.5em;">
+                    <button type="button" id="request-public-btn" class="action-btn small">
+                      <i class="fa fa-redo"></i> {{_("Re-request Public")}}
+                    </button>
+                    <span id="request-public-status" style="margin-left: 10px;"></span>
+                  </div>
+                </div>
+              {% else %}
+                <button type="button" id="request-public-btn" class="action-btn small">
+                  <i class="fa fa-globe"></i> {{_("Request Public")}}
+                </button>
+                <span id="request-public-status" style="margin-left: 10px;"></span>
+                <div style="margin-top: 0.3em;">
+                  <small class="gray">{{_("Request to publish this problem so it is visible to everyone. An admin will review and approve or reject your request.")}}</small>
+                </div>
+              {% endif %}
+            </div>
+          {% endif %}
+
+          <div class="form-row">
+            <label for="{{ form.organizations.id_for_label }}"><b>{{ _('Organizations') }}{% if form.organizations.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.organizations }}
+            {% if form.organizations.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.organizations.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="form-row">
+            <label for="{{ form.date.id_for_label }}"><b>{{ _('Publication Date') }}{% if form.date.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.date }}
+            {% if form.date.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.date.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="form-row">
+            <label for="{{ form.authors.id_for_label }}"><b>{{ _('Authors') }}{% if form.authors.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.authors }}
+            {% if form.authors.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.authors.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="form-row">
+            <label for="{{ form.curators.id_for_label }}"><b>{{ _('Curators') }}{% if form.curators.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.curators }}
+            {% if form.curators.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.curators.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="form-row">
+            <label for="{{ form.testers.id_for_label }}"><b>{{ _('Testers') }}{% if form.testers.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.testers }}
+            {% if form.testers.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.testers.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="form-row">
+            <label for="{{ form.description.id_for_label }}">
+              <b>{{ _('Problem Description') }}{% if form.description.field.required %}<span class="red"> * </span>{% endif %}:</b>
+              <button type="button" id="use-template-btn" class="action-btn small" style="margin-left: 10px;">
+                <i class="fa fa-file-alt"></i> {{ _('Use Template') }}
+              </button>
+            </label>
+            <div style="width: 100%">
+              {{ form.description }}
+            </div>
+            {% if form.description.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.description.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <!-- AI Improve Markdown Button (AI permission required) -->
+          {% if request.user|can_use_ai_features %}
+            <div class="form-row">
+              <button type="button" id="improve-markdown-btn" class="action-btn small" style="margin-right: 10px;">
+                <i class="fa fa-magic"></i> {{ _('Auto Improve Markdown') }}
+              </button>
+              <span id="improve-markdown-status" style="margin-left: 10px;"></span>
+            </div>
+            <div class="form-row" style="margin-top: -10px;">
+              <small class="gray">{{ _('Tip: Upload a PDF below and save first, then use this to convert PDF to markdown. Or use it to reformat existing markdown.') }}</small>
+            </div>
+            <div id="improved-markdown-result" class="form-row" style="display: none; flex-direction: column;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; gap: 1rem;">
+                <label><b>{{ _('Improved Markdown:') }}</b></label>
+                <div style="display: flex; gap: 0.5rem;">
+                  <button type="button" id="improved-markdown-insert" class="action-btn small">{{ _('Insert') }}</button>
+                  <button type="button" id="improved-markdown-copy" class="action-btn small">{{ _('Copy') }}</button>
+                </div>
+              </div>
+              <textarea id="improved-markdown-content" readonly style="width: 100%; min-height: 200px; font-family: monospace; font-size: 13px; padding: 10px; border-radius: 4px; resize: vertical;"></textarea>
+            </div>
+          {% endif %}
+
+          <div class="form-row">
+            <label for="{{ form.pdf_description.id_for_label }}"><b>{{ _('PDF Description') }}{% if form.pdf_description.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.pdf_description }}
+            {% if form.pdf_description.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.pdf_description.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+        </div>
+
+
+        <!-- Metadata Tab -->
+        <div class="tab-pane" id="pane-metadata">
+          <div class="form-row">
+            <label for="{{ form.types.id_for_label }}"><b>{{ _('Problem Types') }}{% if form.types.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.types }}
+            {% if form.types.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.types.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="form-row">
+            <label for="{{ form.group.id_for_label }}"><b>{{ _('Problem Group') }}{% if form.group.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.group }}
+            {% if form.group.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.group.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <hr>
+
+          <!-- AI Tagging Button (AI permission required) -->
+          {% if request.user|can_use_ai_features %}
+            <div class="form-row">
+              <button type="button" id="tag-btn" class="action-btn small" style="margin-right: 10px;">
+                <i class="fa fa-magic"></i> {{ _('Auto-Generate Types & Points') }}
+              </button>
+              <span id="tag-status" style="margin-left: 10px;"></span>
+            </div>
+
+            <hr>
+          {% endif %}
+
+          <div class="inline-fields">
+            <div class="form-row">
+              <label for="{{ form.points.id_for_label }}"><b>{{ _('Points') }}{% if form.points.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+              {{ form.points }}
+              {% if form.points.errors %}
+                <div class="alert alert-danger alert-dismissable">
+                  {% for error in form.points.errors %}
+                    {{ error }}
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </div>
+
+            <div class="form-row checkbox-field">
+              <label for="{{ form.partial.id_for_label }}"><b>{{ form.partial.label }}{% if form.partial.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+              {{ form.partial }}
+            </div>
+          </div>
+
+          <div class="form-row checkbox-field">
+            <label for="{{ form.short_circuit.id_for_label }}"><b>{{ form.short_circuit.label }}{% if form.short_circuit.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.short_circuit }}
+          </div>
+
+          <hr>
+
+          <div class="form-row">
+            <label for="{{ form.time_limit.id_for_label }}"><b>{{ _('Time Limit (s)') }}{% if form.time_limit.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            {{ form.time_limit }}
+            {% if form.time_limit.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.time_limit.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="inline-fields">
+            <div class="form-row">
+              <label for="{{ form.memory_limit.id_for_label }}"><b>{{ _('Memory Limit') }}{% if form.memory_limit.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+              {{ form.memory_limit }}
+              {% if form.memory_limit.errors %}
+                <div class="alert alert-danger alert-dismissable">
+                  {% for error in form.memory_limit.errors %}
+                    {{ error }}
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </div>
+
+            <div class="form-row">
+              <label for="{{ form.memory_unit.id_for_label }}"><b>{{ _('Memory Unit') }}{% if form.memory_unit.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+              {{ form.memory_unit }}
+              {% if form.memory_unit.errors %}
+                <div class="alert alert-danger alert-dismissable">
+                  {% for error in form.memory_unit.errors %}
+                    {{ error }}
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </div>
+          </div>
+
+          <hr>
+
+          <div class="form-row">
+            <label for="{{ form.allowed_languages.id_for_label }}"><b>{{ _('Allowed Languages') }}{% if form.allowed_languages.field.required %}<span class="red"> * </span>{% endif %}:</b></label>
+            <div class="checkbox-list">
+              <div class="form-check">
+                <input type="checkbox" class="form-check-input" id="select-all-languages">
+                <label class="form-check-label" for="select-all-languages">{{ _('Select All') }}</label>
+              </div>
+              {{ form.allowed_languages }}
+            </div>
+            {% if form.allowed_languages.errors %}
+              <div class="alert alert-danger alert-dismissable">
+                {% for error in form.allowed_languages.errors %}
+                  {{ error }}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+        </div>
+
+      </div>
+
+      <div class="form-actions" style="margin-top: 1em;">
+        <button type="submit" class="action-btn">{{ _('Save') }}</button>
+      </div>
+    </form>
+  </div>
+
+{% endblock %}

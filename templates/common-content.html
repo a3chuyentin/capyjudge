@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block media %}
+  {% block content_media %}{% endblock %}
+{% endblock %}
+
+{% block js_media %}
+  {% block content_js_media %}{% endblock %}
+{% endblock %}
+
+{% block body %}
+  <div id="common-content">
+    <div id="content-right">
+      <div class="info-float">{% block info_float %}{% endblock %}</div>
+    </div>
+    <div id="content-left" class="split-common-content">
+      <div class="content-description screen">
+        {% block description %}{% endblock %}
+        {% block description_end %}
+        {% endblock %}
+      </div>
+      {% block post_description_end %}{% endblock %}
+      {% block comments %}{% endblock %}
+    </div>
+  </div>
+{% endblock %}

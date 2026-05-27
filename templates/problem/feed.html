@@ -1,0 +1,21 @@
+{% extends "problem/list-base.html" %}
+{% block left_sidebar %}
+  {% include "problem/left-sidebar.html" %}
+{% endblock %}
+{% block problem_list_js %}
+  {% include "feed/feed_js.html" %}
+{% endblock %}
+
+{% block middle_content %}
+  <div class="tabs">
+    <ul>
+      <li class="{{'active' if feed_type=='for_you'}}">
+        <a href="{{url('problem_feed')}}">{{_('FOR YOU')}}</a>
+      </li>
+      <li class="{{'active' if feed_type=='new'}}">
+        <a href="{{url('problem_feed_new')}}">{{_('NEW')}}</a>
+      </li>
+    </ul>
+  </div>
+  {% include "problem/feed/items.html" %}
+{% endblock %}

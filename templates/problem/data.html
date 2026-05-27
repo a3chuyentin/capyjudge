@@ -1,0 +1,1781 @@
+{% extends "problem/edit_base.html" %}
+{% set page_type = 'data' %}
+
+{% block js_media %}
+  {{ data_form.media.js }}
+  <script type="text/javascript">
+    window.valid_files = {{valid_files_json}};
+    window.big_input = (window.valid_files.length > 100);
+  </script>
+  <script type="text/javascript" src="{{ static('jquery-ui.min.js') }}"></script>
+  <script type="text/javascript" src="{{ static('fine-uploader/jquery.fine-uploader.js') }}"></script>
+  <script type="text/javascript">
+    $(function () {
+      $("#problem-data-zipfile_fine_uploader").fineUploader({
+        request: {
+          endpoint: "{{url('problem_zip_upload', problem.code)}}",
+          params: {
+            'csrfmiddlewaretoken': '{{ csrf_token }}'
+          }
+        },
+        chunking: {
+          enabled: true,
+          partSize: 40000000,
+        },
+        resume: {
+          enabled: true
+        },
+        validation: {
+          allowedExtensions: ['zip'],
+          sizeLimit: {{ max_file_size }},
+        },
+        messages: {
+          sizeError: "{file}: {{ _('File size exceeds 50 MB limit. Contact admin for larger uploads.') }}",
+        },
+      }).on('complete', function (event, id, name, responseJSON) {
+        if (!responseJSON.success) {
+          alert('Fail to upload: ' + responseJSON.error);
+        }
+        else {
+          $('#submit-button').click();
+        }
+      });
+      toggle_custom();
+
+      $("#id_problem-data-checker").select2();
+      $("#id_problem-data-signature_language").select2();
+
+      // Type column has 3 fixed options (S/C/E). For small problems we Select2
+      // it for visual consistency with the rest of the form; for big problems
+      // (hundreds of rows) we keep it as a native <select> since hundreds of
+      // Select2 widgets at page load is the dominant perf cost.
+      if (!window.big_input) {
+        $('tbody:not(.extra-row-body) .type-column select').select2({
+          minimumResultsForSearch: -1
+        });
+      }
+
+      function autofill_if_exists($select, file) {
+        if (!$select.val() && ~window.valid_files.indexOf(file))
+          $select.val(file).trigger('change');
+      }
+
+      var $table = $('#case-table');
+      $table.on('add-row', function (e, $tr) {
+        // The server already renders input_file/output_file as <select>
+        // elements (CaseFileSelectWidget), each with a single option for the
+        // current value. We only need to wire up Select2 + autofill — no DOM
+        // rewrite per row. Big-input problems skip Select2 entirely; small
+        // problems get the full picker populated from window.valid_files.
+        if (window.big_input) return;
+
+        $tr.find('select[id$=input_file], select[id$=output_file]').each(function () {
+          var $select = $(this);
+          var val = $select.val();
+          $select.select2({
+            data: window.valid_files,
+            allowClear: true,
+            placeholder: '',
+          }).val(val).trigger('change').on('change', function () {
+            var v = $select.val();
+            if (!v) return;
+            if ($select.attr('id').endsWith('input_file'))
+              autofill_if_exists($tr.find('select[id$=output_file]'), v.replace(/in(?!.*?in)/, 'out'));
+            else
+              autofill_if_exists($tr.find('select[id$=input_file]'), v.replace(/out(?!.*?out)/, 'in'));
+          });
+        });
+      });
+
+      var order = 0;
+
+      function handle_table_reorder() {
+        var in_batch = false;
+        $table.find('tbody:first tr').each(function () {
+          switch ($(this).attr('data-type')) {
+            case 'C':
+              $(this).find('input[id$=pretest]').toggle(!in_batch);
+              break;
+            case 'S':
+              in_batch = true;
+              break;
+            case 'E':
+              in_batch = false;
+          }
+        });
+      }
+
+      function try_parse_json(json) {
+        try {
+          return JSON.parse(json);
+        } catch (e) {
+          return {};
+        }
+      }
+
+      function swap_row($a, $b) {
+        var $a_order = $a.find('input[id$=order]'), $b_order = $b.find('input[id$=order]');
+        var order = $a_order.val();
+        $a_order.val($b_order.val());
+        $b_order.val(order);
+        $b.after($a);
+        $a.find('span.order').text($a_order.val());
+        $b.find('span.order').text($b_order.val());
+        handle_table_reorder();
+      }
+
+      function checker_precision($checker) {
+        var $td = $checker.parent();
+        var $args = $td.closest('table').find('#id_problem-data-checker_args');
+        var $precision = $('<input>', {
+          type: 'number',
+          value: try_parse_json($args.val()).precision || 6,
+          title: 'precision (decimal digits)',
+          style: 'width: 4em'
+        }).change(function () {
+          if ($checker.val().startsWith('floats'))
+            $args.val(JSON.stringify({precision: parseInt($(this).val())}));
+          // Don't clear $args for non-floats checkers — other helpers (e.g. checker_csv_args) own them.
+        }).appendTo($td);
+
+        $checker.change(function () {
+          $precision.toggle($checker.val().startsWith('floats'));
+          if ($checker.val().startsWith('floats')) $precision.change();
+        }).change();
+      }
+
+      function checker_csv_args($checker) {
+        var $td = $checker.parent();
+        var $args = $td.closest('table').find('[id$=checker_args]').first();
+        var csvKeys = ['csv_accuracy','csv_rmse','csv_mae','csv_f1','csv_auc','csv_logloss'];
+        var lowerBetterKeys = ['csv_rmse','csv_mae','csv_logloss'];
+
+        var $box = $('<div class="csv-args-box" style="display:none; margin-top:0.5em;"></div>');
+        var $id = $('<input>', {type: 'text', placeholder: 'id_column', style: 'width:7em; margin-right:0.3em;'});
+        var $lbl = $('<input>', {type: 'text', placeholder: 'label_column', style: 'width:8em; margin-right:0.3em;'});
+        var $hdr = $('<label style="margin-right:0.3em;"><input type="checkbox" checked> has_header</label>');
+        var $pf = $('<input>', {type: 'number', min: '0', max: '1', step: '0.05', placeholder: 'pretest_fraction', style: 'width:6em; margin-right:0.3em;'});
+        var $base = $('<input>', {type: 'number', min: '0', step: 'any', placeholder: 'baseline', style: 'width:6em; margin-right:0.3em;'});
+        $box.append($hdr, $id, $lbl, $pf, $base);
+        $td.append($box);
+
+        function readArgs() {
+          try { return JSON.parse($args.val() || '{}') || {}; } catch (e) { return {}; }
+        }
+        function writeArgs() {
+          if (csvKeys.indexOf($checker.val()) === -1) return;
+          // Merge into existing args so future/unknown keys are preserved.
+          var args = readArgs();
+          args.id_column = $id.val();
+          args.label_column = $lbl.val();
+          args.has_header = $hdr.find('input').is(':checked');
+          var pfv = parseFloat($pf.val());
+          if (isFinite(pfv) && pfv > 0 && pfv < 1) args.pretest_fraction = pfv;
+          else delete args.pretest_fraction;
+          var bv = parseFloat($base.val());
+          if (isFinite(bv) && bv > 0 && lowerBetterKeys.indexOf($checker.val()) !== -1) args.baseline = bv;
+          else delete args.baseline;
+          $args.val(JSON.stringify(args));
+        }
+        function show() {
+          var cur = readArgs();
+          $id.val(cur.id_column || '');
+          $lbl.val(cur.label_column || '');
+          $hdr.find('input').prop('checked', cur.has_header !== false);
+          $pf.val(cur.pretest_fraction != null ? cur.pretest_fraction : '');
+          $base.val(cur.baseline != null ? cur.baseline : '');
+          $base.toggle(lowerBetterKeys.indexOf($checker.val()) !== -1);
+          $box.show();
+        }
+        function hide() { $box.hide(); }
+
+        $checker.change(function() {
+          if (csvKeys.indexOf($checker.val()) !== -1) show(); else hide();
+        }).change();
+
+        $id.add($lbl).add($pf).add($base).on('change keyup', writeArgs);
+        $hdr.find('input').on('change', writeArgs);
+      }
+
+      function toggle_custom() {
+        let $checker = $('#id_problem-data-checker')
+
+        let $custom_checker = $('#id_problem-data-custom_checker');
+        let $validator = $('#id_problem-data-custom_checker_cpp');
+        let $interactive = $('#id_problem-data-interactive_judge');
+        let $ioi_signature = $("#id_problem-data-use_ioi_signature");
+        let $signature_table = $('#signature-grader-table');
+
+        // Generator fields
+        let $generator = $('#id_problem-data-generator');
+        let $generator_script = $('#id_problem-data-generator_script');
+
+        $tr_checker = $custom_checker.closest("tr");
+        $tr_validator = $validator.closest("tr");
+        $tr_interactive = $interactive.closest("tr");
+
+        // Check if generator has content
+        var hasGenerator = {% if data_form.generator.value() %}true{% else %}false{% endif %};
+
+        // Generator script row - create it dynamically
+        let $tr_generator_script = $('<tr></tr>').html(
+          '<th><label for="id_problem-data-generator_script">{{_("Generator script")}}:</label></th>' +
+          '<td>' +
+          '<div class="generator-script-container">' +
+          '<button type="button" class="btn btn-sm" id="add-generator-script">' +
+          '<i class="fa fa-plus"></i> {{_("Add Generator Script")}}' +
+          '</button>' +
+          '<button type="button" class="btn btn-sm" id="edit-generator-script" style="display: none;">' +
+          '<i class="fa fa-edit"></i> {{_("Edit Generator Script")}}' +
+          '</button>' +
+          '</div>' +
+          '</td>'
+        );
+
+        // Move the original generator_script field to the dynamic row instead of duplicating it
+        $tr_generator_script.find('.generator-script-container').prepend($generator_script);
+
+        $td = $checker.parent();
+
+        $("<a/>",{
+          text: " ({{_('Instruction')}})",
+          target: "_blank",
+          href: "{{url('test_data_instructions')}}"
+        }).appendTo($ioi_signature.parent());
+
+        $checker.change(function () {
+          $tr_checker.toggle($checker.val() == 'custom').change();
+          $tr_validator.toggle(['customcpp', 'testlib', 'testlibcms'].indexOf($checker.val()) !== -1).change();
+          $tr_interactive.toggle($checker.val() == 'interact' || $checker.val() == 'interacttl').change();
+        }).change();
+
+        $ioi_signature.change(function() {
+          $signature_table.toggle($ioi_signature.is(':checked'));
+        }).change();
+
+        // Output-only sub-fields (binary_data, output_zip_size_mb): only
+        // relevant when the problem is marked output-only.
+        let $output_only = $('#id_problem-data-output_only');
+        let $tr_binary_data = $('#id_problem-data-binary_data').closest('tr');
+        let $tr_output_zip = $('#id_problem-data-output_zip_size_mb').closest('tr');
+        $output_only.change(function () {
+          let on = $output_only.is(':checked');
+          $tr_binary_data.toggle(on);
+          $tr_output_zip.toggle(on);
+        }).change();
+
+        // Communication sub-fields (manager + num_processes): only relevant
+        // when the problem is marked as a Communication task.
+        let $is_communication = $('#id_problem-data-is_communication');
+        let $tr_comm_manager = $('#id_problem-data-communication_manager').closest('tr');
+        let $tr_comm_num_proc = $('#id_problem-data-communication_num_processes').closest('tr');
+        $is_communication.change(function () {
+          let on = $is_communication.is(':checked');
+          $tr_comm_manager.toggle(on);
+          $tr_comm_num_proc.toggle(on);
+        }).change();
+
+        // Testcase validator link
+        var $validatorTd = $('#id_problem-data-testcase_validator').closest('td');
+        {% if data_form.testcase_validator.value() %}
+          $validatorTd.append(
+            ' <a href="{{ url("problem_validator", problem.code) }}" style="margin-left: 1em;">' +
+            '<i class="fa fa-play-circle"></i> {{ _("Run Validator") }}</a>'
+          );
+        {% endif %}
+
+        // Generator toggle logic  
+        function checkGeneratorToggle() {
+          // Check FileEditWidget content for dynamic updates
+          var $contentTextarea = $('#id_problem-data-generator-content');
+          var currentHasGenerator = hasGenerator || ($contentTextarea.length && $contentTextarea.val().trim());
+
+          if (currentHasGenerator) {
+            if (!$tr_generator_script.parent().length) {
+              // Insert generator script row right after generator row
+              $generator.closest("tr").after($tr_generator_script);
+
+              // Attach event handlers to the new buttons
+              $tr_generator_script.find('#add-generator-script, #edit-generator-script').off('click').on('click', function() {
+                openGeneratorScriptModal();
+              });
+            }
+            $tr_generator_script.show();
+          } else {
+            $tr_generator_script.hide();
+          }
+
+          updateGeneratorScriptButton();
+        }
+
+        // Check when content in FileEditWidget changes
+        $(document).off('change.dataPage keyup.dataPage input.dataPage', '#id_problem-data-generator-content');
+        $(document).on('change.dataPage keyup.dataPage input.dataPage', '#id_problem-data-generator-content', checkGeneratorToggle);
+
+        // Initial check
+        setTimeout(checkGeneratorToggle, 100);
+      };
+
+      // Generator script functions - define early so they're available for toggle
+      function updateLineNumbers() {
+        var textarea = $('#generator-script-textarea');
+        var lineNumbers = $('#line-numbers');
+        var lines = textarea.val().split('\n');
+        var numberHtml = '';
+
+        for (var i = 1; i <= Math.max(lines.length, 15); i++) {
+          numberHtml += i + '\n';
+        }
+
+        lineNumbers.text(numberHtml);
+      }
+
+      function openGeneratorScriptModal() {
+        var currentScript = $('#id_problem-data-generator_script').val() || '';
+        $('#generator-script-textarea').val(currentScript);
+        updateLineNumbers();
+        $('#generator-script-modal').css('display', 'flex');
+      }
+
+      function closeGeneratorScriptModal() {
+        $('#generator-script-modal').hide();
+      }
+
+      function saveGeneratorScript() {
+        var scriptContent = $('#generator-script-textarea').val();
+        $('#id_problem-data-generator_script').val(scriptContent);
+
+        // Update button text based on content
+        updateGeneratorScriptButton();
+
+        closeGeneratorScriptModal();
+      }
+
+      function updateGeneratorScriptButton() {
+        var hasScript = $('#id_problem-data-generator_script').val() && $('#id_problem-data-generator_script').val().trim();
+        var $addBtn = $('#add-generator-script');
+        var $editBtn = $('#edit-generator-script');
+
+        if (hasScript) {
+          $addBtn.hide();
+          $editBtn.show();
+        } else {
+          $addBtn.show();
+          $editBtn.hide();
+        }
+      }
+
+      checker_precision($('#id_problem-data-checker'));
+      checker_csv_args($('#id_problem-data-checker'));
+
+      $(document).off('click.dataPageTestcaseJson', '#open-custom-testcase-json');
+      $(document).on('click.dataPageTestcaseJson', '#open-custom-testcase-json', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openTestcaseJsonModal();
+        return false;
+      });
+
+      // Per-row state computed once; the per-row add-row handler reads from
+      // this map instead of walking siblings (was O(n²) via prevAll/nextUntil).
+      var rowDisabled = {};
+
+      // Inline delete UX: hide the raw DELETE checkbox and replace it with an
+      // × button (matches the contest-edit page pattern in sortable_formset.js).
+      // Saved rows are hidden (Django still needs the DELETE field to persist
+      // the deletion on Apply). New unsaved rows are removed from the DOM and
+      // the formset's TOTAL_FORMS count is decremented so Django doesn't try
+      // to validate the gap.
+      // Single delegated handler for all delete buttons — avoids binding one
+      // handler per row (588 bindings for large problems).
+      $table.on('click', '.remove-row-btn', function (e) {
+        e.preventDefault();
+        var $tr = $(this).closest('tr');
+        if ($(this).attr('data-has-pk') === 'true') {
+          $tr.find('input[id$=DELETE]').prop('checked', true);
+          $tr.hide();
+        } else {
+          $tr.remove();
+          var $total = $('#id_cases-TOTAL_FORMS');
+          var n = parseInt($total.val(), 10);
+          if (n > 0) $total.val(n - 1);
+        }
+      });
+
+      function attachInlineDelete($tr) {
+        // Button and hidden DELETE input are server-rendered. This function
+        // only needs to hide rows that were already deleted (DELETE checked)
+        // on a previous save, so the Apply form keeps submitting the flag.
+        var $del = $tr.find('input[id$=DELETE]');
+        if ($del.is(':checked')) $tr.hide();
+      }
+
+      $table.on('add-row', function (e, $tr, opts) {
+        opts = opts || {};
+        // Drag handle and order span are rendered server-side; just sync the
+        // order counter and update the span text for newly added rows.
+        var $order = $tr.find('input').filter('[id$=order]');
+        if (!$tr.find('span.order').length) {
+          // New row added by JS (extra-row-body clone): inject handle + span.
+          $order.after($('<span>', {'class': 'order'}))
+            .after($('<i>', {'class': 'fa fa-fw fa-lg fa-ellipsis-v'}));
+        }
+        $order.val(++order);
+        $tr.find('span.order').text(order);
+
+        // Exclude DELETE (last input) from $opts — inline-delete will hide
+        // the raw checkbox and own its visibility via $deleteWidget below.
+        // Otherwise interactive type changes would re-show the raw checkbox.
+        var $opts = $tr.find('input').slice(2, 5);
+        var $files = $tr.find('select[id$=input_file], select[id$=output_file]');
+        var $delete = $tr.find('input[id$=DELETE]');
+        var $batchScoring = $tr.find('.batch-scoring-container');
+        // generator_args is only meaningful for real cases (type=C), not for
+        // batch start/end markers.
+        var $genArgs = $tr.find('.generator-args-container');
+        // attachInlineDelete permanently hides the raw DELETE checkbox and
+        // adds an × button. Use the button as the toggleable affordance.
+        // Cached once — the button is server-rendered so it exists immediately.
+        var $deleteWidget = $tr.find('.remove-row-btn');
+        // $fileWidgets stays a function: Select2 wrappers may be added after
+        // this handler runs (by the file-select add-row handler), so we
+        // re-query siblings on each applyType call.
+        var $fileWidgets = function () { return $files.add($files.siblings('.select2')); };
+        var $type = $tr.find('select[id$=type]');
+
+        function applyType(val, disabled) {
+          switch (val) {
+            case 'S':
+            case 'E':
+              $opts.toggle(val == 'S');
+              $fileWidgets().hide();
+              $deleteWidget.toggle(val == 'S');
+              $genArgs.hide();
+              $batchScoring.toggle(val == 'S');
+              break;
+            default:
+              $opts.toggle(val == 'C');
+              $fileWidgets().toggle(val == 'C');
+              $deleteWidget.toggle(val == 'C');
+              $genArgs.toggle(val == 'C');
+              $batchScoring.toggle(val == 'S');
+              $tr.find('input[id$=pretest]').toggle(val == 'C' && !disabled);
+          }
+          $tr.attr('data-type', val);
+        }
+
+        $type.change(function () {
+          // User-driven change: recompute disabled from siblings (cheap, only
+          // fires when the user actually edits the type — not the bulk case).
+          var val = $(this).val();
+          var $prevs = $tr.prevAll('tr[data-type=S], tr[data-type=E]');
+          var disabled = $prevs.length && $prevs.get(0).getAttribute('data-type') == 'S';
+          applyType(val, disabled);
+          $tr.nextUntil('tr[data-type=S], tr[data-type=E], tr[data-type=""]')
+            .find('input[id$=pretest]').toggle(!disabled);
+        });
+
+        // Attach the inline delete button BEFORE applyType — applyType's
+        // visibility toggle needs the × element to exist so it can hide it
+        // on S/E rows.
+        attachInlineDelete($tr);
+
+        if (opts.initial) {
+          // Bulk path (initial render): caller passes `disabled` from the
+          // single-pass scan below. Skip the per-row sibling walk.
+          applyType($type.val(), opts.disabled);
+        } else {
+          $type.change();
+        }
+
+        // Per-row checker helpers only matter if the row picked a per-case
+        // checker. Otherwise they spawn ~10 unused DOM elements per row;
+        // multiply by 270 rows = ~3k unnecessary nodes. Defer until the user
+        // actually picks one.
+        var $rowChecker = $tr.find('select[id$=checker]');
+        function initRowChecker() {
+          checker_precision($rowChecker);
+          checker_csv_args($rowChecker);
+        }
+        if ($rowChecker.val()) {
+          initRowChecker();
+        } else {
+          $rowChecker.one('change', function () {
+            initRowChecker();
+            // Re-trigger so the just-initialized helpers see the new value.
+            $rowChecker.trigger('change');
+          });
+        }
+      });
+
+      // Initial render: process the first chunk synchronously so visible rows
+      // are ready by paint, then stream the rest in larger chunks across
+      // animation frames. Per-row work is ~5-10ms in jQuery; we use a 60ms
+      // chunk budget so each frame makes meaningful progress without blocking
+      // the user from scrolling for more than a frame.
+      (function () {
+        var rows = $table.find('tbody:first > tr').toArray();
+        var i = 0, disabled = false;
+        var SYNC_ROWS = 40;       // process this many before yielding
+        var CHUNK_BUDGET_MS = 60; // and ~60ms per subsequent chunk
+
+        function processRow() {
+          var $tr = $(rows[i++]);
+          var dataType = $tr.attr('data-type');
+          var rowDisabled = disabled;
+          if (dataType === 'S') { rowDisabled = true; disabled = true; }
+          else if (dataType === 'E') { rowDisabled = false; disabled = false; }
+          $table.trigger('add-row', [$tr, {initial: true, disabled: rowDisabled}]);
+        }
+
+        // Synchronous bootstrap so above-the-fold rows have handlers wired up
+        // when the user first sees the page.
+        while (i < rows.length && i < SYNC_ROWS) processRow();
+
+        function processChunk() {
+          var start = performance.now();
+          while (i < rows.length && performance.now() - start < CHUNK_BUDGET_MS) {
+            processRow();
+          }
+          if (i < rows.length) requestAnimationFrame(processChunk);
+        }
+        if (i < rows.length) requestAnimationFrame(processChunk);
+      })();
+
+      $('form').submit(function () {
+        $table.find('tbody:first').find('tr').each(function () {
+          var filled = false;
+          $(this).find('input, select').each(function () {
+            var $this = $(this);
+            if (!$this.attr('name'))
+              return;
+            if ($this.attr('name').endsWith('id') || $this.attr('name').endsWith('batch_scoring'))
+              return;
+            if ($this.attr('name').endsWith('type')) {
+              filled |= $this.val() && $this.val() !== 'C';
+              return;
+            }
+            if ($this.attr('type') === 'checkbox')
+              filled |= $this.is(':checked');
+            else if (!$this.attr('name').endsWith('order'))
+            filled |= !!$this.val();
+          });
+          if (!filled)
+            $(this).find('input[id$=order]').val('');
+        });
+      });
+
+      var $total = $('#id_cases-TOTAL_FORMS');
+
+      $('a#add-case-row').click(function () {
+        var $tr;
+        $table.find('tbody:first').append($tr = $($table.find('.extra-row-body').html()
+            .replace(/__prefix__/g, $total.val())));
+        $tr.find('.type-column select option[value="C"]').attr('selected', true);
+
+        // Ensure new row has proper generator args structure
+        $tr.find('td').each(function() {
+          var $cell = $(this);
+          var $input = $cell.find('input[name*="generator_args"]');
+          if ($input.length && !$cell.find('.generator-args-container').length) {
+            $input.wrap('<div class="generator-args-container"></div>');
+            $input.before('<i class="fa fa-plus generator-args-icon" title="Click to add generator arguments" style="display: none;"></i>');
+          }
+        });
+
+        $total.val(parseInt($total.val()) + 1);
+        $table.trigger('add-row', [$tr]);
+        window.scrollBy(0, $tr.height());
+        return false;
+      });
+
+      function isInpFile(x) {
+        let tail = ['.in', '.inp', '.txt', '.dat', '.IN', '.INP', '.TXT', '.DAT']
+        for (let i of tail) {
+          if (x.endsWith(i)) {
+            return true;
+          }
+        }
+        if (!x.includes('.') && !x.endsWith('/')) {
+          return true;
+        }
+        return false;
+      }
+      function isOutFile(x) {
+        let tail = ['.out', '.ans', '.res', '.a', '.OUT', '.ANS', '.RES', '.A'];
+        for (let i of tail) {
+          if (x.endsWith(i)) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function setSelectValue($sel, file) {
+        if (window.big_input || !$sel.hasClass('select2-hidden-accessible')) {
+          $sel.empty().append($('<option>', {value: file, text: file, selected: true}));
+          $sel.val(file).change();
+        } else {
+          $sel.select2('destroy').empty().select2({ data: [file] });
+          $sel.val(file).change();
+        }
+      }
+
+      function update_select2() {
+        // Rows are wired up by the add-row handler as they are created. This
+        // compatibility hook is kept for the autofill paths that call it after
+        // bulk row creation.
+      }
+
+      function findTestFile(testcaseName, kind) {
+        var name = (testcaseName || '').trim();
+        if (!name) return '';
+        if (window.valid_files.indexOf(name) !== -1) {
+          if (kind === 'input' && isInpFile(name)) return name;
+          if (kind === 'output' && isOutFile(name)) return name;
+        }
+
+        var extensions = kind === 'input'
+          ? ['.in', '.inp', '.txt', '.dat', '.IN', '.INP', '.TXT', '.DAT']
+          : ['.out', '.ans', '.res', '.a', '.OUT', '.ANS', '.RES', '.A'];
+        for (var i = 0; i < extensions.length; i++) {
+          var candidate = name + extensions[i];
+          if (window.valid_files.indexOf(candidate) !== -1) return candidate;
+        }
+
+        var slash = name.lastIndexOf('/');
+        var dir = slash >= 0 ? name.substring(0, slash + 1) : '';
+        var base = slash >= 0 ? name.substring(slash + 1) : name;
+        var dot = base.lastIndexOf('.');
+        if (dot > 0) {
+          var stem = dir + base.substring(0, dot);
+          for (var j = 0; j < extensions.length; j++) {
+            var stemCandidate = stem + extensions[j];
+            if (window.valid_files.indexOf(stemCandidate) !== -1) return stemCandidate;
+          }
+        }
+
+        return name;
+      }
+
+      function clearCaseRow(row) {
+        $("#id_cases-"+row+"-generator_args").val('').change();
+        $("#id_cases-"+row+"-input_file").val('').change();
+        $("#id_cases-"+row+"-output_file").val('').change();
+      }
+
+      function updateGeneratorArgsDisplay($generatorInput) {
+        var $container = $generatorInput.closest('.generator-args-container');
+        var $icon = $container.find('.generator-args-icon');
+        if ($generatorInput.val() && $generatorInput.val().trim()) {
+          $icon.hide();
+          $generatorInput.removeClass('generator-args-hidden').show();
+        } else {
+          $icon.show();
+          $generatorInput.addClass('generator-args-hidden');
+        }
+      }
+
+      function ensureCaseRows(totalRowsNeeded) {
+        while ($total.val() < totalRowsNeeded) {
+          $('a#add-case-row').click();
+        }
+      }
+
+      function setBatchStartRow(row, score, batchMode) {
+        var $sRow = $("#id_cases-"+row+"-type").val('S').change().closest('tr');
+        $sRow.find('select[id$=batch_scoring]').val(
+          batchMode === 'MIN' ? 'min' : 'sum'
+        ).change();
+        $("#id_cases-"+row+"-points").val(score).change();
+        clearCaseRow(row);
+      }
+
+      function setBatchEndRow(row) {
+        $("#id_cases-"+row+"-type").val('E').change();
+        $("#id_cases-"+row+"-points").val('').change();
+        clearCaseRow(row);
+      }
+
+      function setNormalCaseRow(row, inputFile, outputFile, points, generatorArgs) {
+        $("#id_cases-"+row+"-type").val('C').change();
+        setSelectValue($("#id_cases-"+row+"-input_file"), inputFile);
+        setSelectValue($("#id_cases-"+row+"-output_file"), outputFile);
+        $("#id_cases-"+row+"-points").val(points).change();
+
+        var $generatorInput = $("#id_cases-"+row+"-generator_args");
+        $generatorInput.val(generatorArgs || '').change();
+        updateGeneratorArgsDisplay($generatorInput);
+      }
+
+      function normalizeGeneratorArgs(args) {
+        if (args == null) return '';
+        if (Array.isArray(args)) return args.join(' ');
+        return String(args).trim();
+      }
+
+      function normalizeTestcaseJsonEntry(item, defaultScore, fallbackTestcase) {
+        if (typeof item === 'string') {
+          if (!item.trim()) {
+            throw '{{_("Every testcase name must be a non-empty string.")}}';
+          }
+          return {
+            score: defaultScore == null ? 1 : defaultScore,
+            testcase: item.trim(),
+            generator_args: ''
+          };
+        }
+
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          throw '{{_("Every testcase entry must be a string or an object.")}}';
+        }
+
+        var explicitTestcase = (item.testcase || item.name || '').trim();
+        var generatorArgs = normalizeGeneratorArgs(item.generator_args);
+        if (explicitTestcase && generatorArgs) {
+          throw '{{_("Use either testcase or generator_args for each row, not both.")}}';
+        }
+        var testcase = explicitTestcase || (generatorArgs ? fallbackTestcase : '');
+        if (!testcase) throw '{{_("Every row must have either testcase or generator_args.")}}';
+
+        var score = item.score == null || item.score === ''
+          ? (defaultScore == null ? 1 : defaultScore)
+          : Number(item.score);
+        if (!isFinite(score)) {
+          throw '{{_("Each testcase score must be numeric.")}}';
+        }
+
+        return {
+          score: score,
+          testcase: testcase,
+          generator_args: generatorArgs
+        };
+      }
+
+      function parseTestcaseJsonData(raw) {
+        var parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          throw '{{_("Invalid JSON.")}}';
+        }
+        if (!Array.isArray(parsed)) {
+          throw '{{_("Expected a JSON list.")}}';
+        }
+        if (!parsed.length) {
+          throw '{{_("JSON list cannot be empty.")}}';
+        }
+
+        var isBatchJson = parsed.every(function(item) {
+          return item && typeof item === 'object' && !Array.isArray(item) && Array.isArray(item.testcases);
+        });
+        var isFlatJson = parsed.every(function(item) {
+          if (typeof item === 'string') return !!item.trim();
+          if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+          var hasTestcase = typeof item.testcase === 'string' || typeof item.name === 'string';
+          var hasGeneratorArgs = item.generator_args != null && normalizeGeneratorArgs(item.generator_args);
+          return (hasTestcase || hasGeneratorArgs) && !(hasTestcase && hasGeneratorArgs);
+        });
+
+        if (isBatchJson) {
+          return {
+            mode: 'batch',
+            batches: parsed.map(function(batch, batchIndex) {
+              var score = Number(batch.score);
+              if (!isFinite(score)) {
+                throw '{{_("Each batch must have a numeric score.")}}';
+              }
+              if (!batch.testcases.length) {
+                throw '{{_("Each batch must have a non-empty testcases list.")}}';
+              }
+              return {
+                score: score,
+                testcases: batch.testcases.map(function(testcase, caseIndex) {
+                  return normalizeTestcaseJsonEntry(
+                    testcase,
+                    1,
+                    'json_gen_batch' + (batchIndex + 1) + '_case' + (caseIndex + 1)
+                  );
+                })
+              };
+            })
+          };
+        }
+
+        if (isFlatJson) {
+          return {
+            mode: 'case',
+            cases: parsed.map(function(item, caseIndex) {
+              return normalizeTestcaseJsonEntry(
+                item,
+                1,
+                'json_gen_case' + (caseIndex + 1)
+              );
+            })
+          };
+        }
+
+        throw '{{_("Use either batch objects with testcases, or flat testcase entries.")}}';
+      }
+
+      function updateTestcaseJsonLineNumbers() {
+        var textarea = $('#testcase-json-textarea');
+        var lineNumbers = $('#testcase-json-line-numbers');
+        var lines = textarea.val().split('\n');
+        var numberHtml = '';
+
+        for (var i = 1; i <= Math.max(lines.length, 15); i++) {
+          numberHtml += i + '\n';
+        }
+
+        lineNumbers.text(numberHtml);
+      }
+
+      function testcaseJsonExample() {
+        return [
+          {
+            score: 21,
+            testcases: ['subtask1-01', 'subtask1-02', 'subtask1-03']
+          },
+          {
+            score: 79,
+            testcases: ['subtask2-01', 'subtask2-02', 'subtask2-03', 'subtask2-04']
+          }
+        ];
+      }
+
+      function flatTestcaseJsonExample() {
+        return [
+          {score: 1, testcase: '1'},
+          {score: 1, generator_args: '2 --small'},
+          {score: 2, testcase: 'complete-small-01'}
+        ];
+      }
+
+      function testcaseNameFromFile(file) {
+        if (!file) return '';
+        var base = file.split('/').pop();
+        return base.replace(/\.(in|inp|txt|dat|out|ans|res|a)$/i, '');
+      }
+
+      function testcaseJsonFromCurrentRows() {
+        var batches = [];
+        var standalone = [];
+        var currentBatch = null;
+
+        function finishBatch() {
+          if (currentBatch && currentBatch.testcases.length) {
+            batches.push(currentBatch);
+          }
+          currentBatch = null;
+        }
+
+        $("#case-table tbody:first tr").each(function() {
+          var $tr = $(this);
+          if (!$tr.is(':visible')) return;
+
+          var type = $tr.find('select[id$=type]').val();
+          var points = parseFloat($tr.find('input[id$=points]').val());
+          var inputName = testcaseNameFromFile($tr.find('select[id$=input_file]').val());
+          var outputName = testcaseNameFromFile($tr.find('select[id$=output_file]').val());
+          var generatorArgs = ($tr.find('input[id$=generator_args]').val() || '').trim();
+          var testcaseName = inputName || outputName;
+
+          if (type === 'S') {
+            finishBatch();
+            currentBatch = {
+              score: isFinite(points) ? points : 0,
+              testcases: []
+            };
+          } else if (type === 'E') {
+            finishBatch();
+          } else if (type === 'C' && (testcaseName || generatorArgs)) {
+            if (currentBatch) {
+              if (generatorArgs) {
+                currentBatch.testcases.push({generator_args: generatorArgs});
+              } else {
+                currentBatch.testcases.push(testcaseName);
+              }
+            } else {
+              var testcaseEntry = {
+                score: isFinite(points) ? points : 1,
+              };
+              if (generatorArgs) {
+                testcaseEntry.generator_args = generatorArgs;
+              } else if (testcaseName) {
+                testcaseEntry.testcase = testcaseName;
+              }
+              standalone.push(testcaseEntry);
+            }
+          }
+        });
+        finishBatch();
+
+        if (batches.length) return batches;
+        if (standalone.length) return standalone;
+        return [];
+      }
+
+      function openTestcaseJsonModal() {
+        $('#testcase-json-error').hide().text('');
+        $('#testcase-json-help').hide();
+        $('#toggle-testcase-json-help').text('{{_("Show examples")}}');
+        var testcaseJson = testcaseJsonFromCurrentRows();
+        $('#testcase-json-textarea').val(
+          testcaseJson.length ? JSON.stringify(testcaseJson, null, 2) : ''
+        );
+        updateTestcaseJsonLineNumbers();
+        $('#testcase-json-modal').css({
+          display: 'flex',
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          zIndex: 1000,
+          alignItems: 'center',
+          justifyContent: 'center'
+        });
+        $('#testcase-json-textarea').focus();
+      }
+
+      function closeTestcaseJsonModal() {
+        $('#testcase-json-modal').hide();
+      }
+
+      function fillTestcaseJsonTestcases(raw, showModalError) {
+        var parsed;
+        try {
+          parsed = parseTestcaseJsonData(raw);
+        } catch (e) {
+          if (showModalError) {
+            $('#testcase-json-error').text(e).show();
+          } else {
+            alert(e);
+          }
+          return false;
+        }
+
+        if (parsed.mode === 'case') {
+          ensureCaseRows(parsed.cases.length);
+          parsed.cases.forEach(function(testcase, row) {
+            setNormalCaseRow(
+              row,
+              findTestFile(testcase.testcase, 'input'),
+              findTestFile(testcase.testcase, 'output'),
+              testcase.score,
+              testcase.generator_args
+            );
+          });
+
+          update_select2();
+          setTimeout(function() {
+            updateAllGeneratorArgsDisplays();
+          }, 100);
+          return true;
+        }
+
+        var batches = parsed.batches;
+        var totalCases = 0;
+        batches.forEach(function(batch) {
+          totalCases += batch.testcases.length;
+        });
+        var totalRowsNeeded = totalCases + 2 * batches.length;
+        ensureCaseRows(totalRowsNeeded);
+
+        var batchMode = $("#problem-type").val();
+        var casePoints = batchMode === 'ICPC' ? '0' : '1';
+        var row = 0;
+        batches.forEach(function(batch) {
+          setBatchStartRow(row, batch.score, batchMode);
+          row += 1;
+
+          batch.testcases.forEach(function(testcase) {
+            setNormalCaseRow(
+              row,
+              findTestFile(testcase.testcase, 'input'),
+              findTestFile(testcase.testcase, 'output'),
+              casePoints,
+              testcase.generator_args
+            );
+            row += 1;
+          });
+
+          if (batchMode === 'ICPC') {
+            $("#id_cases-"+(row-1)+"-points").val(batch.score).change();
+          }
+          setBatchEndRow(row);
+          row += 1;
+        });
+
+        update_select2();
+        setTimeout(function() {
+          updateAllGeneratorArgsDisplays();
+        }, 100);
+        return true;
+      }
+
+      $('a#fill-testcases').click(function (e) {
+        e.preventDefault();
+
+        // Check if generator script is provided
+        var generatorScriptField = $('#id_problem-data-generator_script');
+        var hasGeneratorScript = generatorScriptField.length && generatorScriptField.val().trim();
+
+        // First, handle zip file mode (input/output files)
+        var inFiles = [], outFiles = [];
+        for (let file of window.valid_files) {
+          if (file.endsWith('/')) {
+            continue;
+          }
+          if (isInpFile(file)) {
+            inFiles.push(file);
+          }
+          if (isOutFile(file)) {
+            outFiles.push(file);
+          }
+        }
+
+        var hasZipFiles = inFiles.length > 0 && outFiles.length > 0 && inFiles.length == outFiles.length;
+
+        if (!hasZipFiles && !hasGeneratorScript) {
+          return false;
+        }
+
+        // Find existing test cases with generator args
+        var existingGeneratorArgs = [];
+        $('#case-table tbody tr').each(function() {
+          var $generatorArgs = $(this).find('input[name*="generator_args"]');
+          var args = $generatorArgs.val().trim();
+          if (args) {
+            existingGeneratorArgs.push(args);
+          }
+        });
+
+        var scriptLines = [];
+        var zipFileCount = 0;
+        var existingGeneratorCount = existingGeneratorArgs.length;
+        var newGeneratorCount = 0;
+
+        if (hasZipFiles) {
+          inFiles.sort();
+          outFiles.sort();
+          zipFileCount = inFiles.length;
+
+          // big number of input
+          if (inFiles.length > 100) {
+            window.big_input = true;
+          }
+        }
+
+        if (hasGeneratorScript) {
+          // Filter out empty lines and comment lines (starting with # or //)
+          scriptLines = generatorScriptField.val().trim().split('\n').filter(line => {
+            var trimmed = line.trim();
+            if (!trimmed) return false;  // Skip empty lines
+            if (trimmed.startsWith('#')) return false;  // Skip # comments
+            if (trimmed.startsWith('//')) return false;  // Skip // comments
+            return true;
+          });
+          newGeneratorCount = scriptLines.length;
+        }
+
+        var totalTestCases = zipFileCount + existingGeneratorCount + newGeneratorCount;
+
+        if (totalTestCases === 0) {
+          return false;
+        }
+
+        // Add batch handling from original code
+        var batch_starts = $('#batch_starts').val();
+        batch_starts = batch_starts.split(',');
+        batch_starts = batch_starts.filter(e => {
+          return e.length && e == +e;
+        });
+        batch_starts = new Set(batch_starts.map(x => Math.min(Math.max(1, parseInt(x)), totalTestCases - 1)));
+        batch_starts.add(totalTestCases + 1);
+
+        var totalRowsNeeded = totalTestCases + 2 * batch_starts.size - 2;
+        while ($total.val() < totalRowsNeeded) {
+          $('a#add-case-row').click();
+        }
+
+        var row = 0;
+        var caseIndex = 1;
+
+        // First: Create test cases from zip files (without generator args)
+        for (var i = 0; i < zipFileCount; i++) {
+          if (batch_starts.has(caseIndex)) {
+            var $sRow = $("#id_cases-"+row+"-type").val('S').change().closest('tr');
+            // Set batch_scoring mode from the selected problem type
+            var batchMode = $("#problem-type").val();
+            $sRow.find('select[id$=batch_scoring]').val(
+              batchMode === 'MIN' ? 'min' : 'sum'
+            ).change();
+            row += 1;
+          }
+
+          // Set input/output files from zip. In big_input mode Select2 was
+          // never initialized on these selects — re-set option list directly.
+          setSelectValue($("#id_cases-"+row+"-input_file"), inFiles[i]);
+          setSelectValue($("#id_cases-"+row+"-output_file"), outFiles[i]);
+
+          // Clear any existing generator args for file-based test cases
+          var $generatorInput = $("#id_cases-"+row+"-generator_args");
+          $generatorInput.val('');
+
+          // Update display for cleared generator args
+          var $container = $generatorInput.closest('.generator-args-container');
+          var $icon = $container.find('.generator-args-icon');
+          $icon.show();
+          $generatorInput.addClass('generator-args-hidden');
+
+          // Set points
+          // ICPC: [0,...,0,1] — earlier cases have 0 weight.
+          // SUM / MIN: [1,...,1] — equal weights, all cases contribute.
+          if ($("#problem-type").val() == "ICPC") {
+            $("#id_cases-"+row+"-points").val('0').change();
+          } else {
+            $("#id_cases-"+row+"-points").val('1').change();
+          }
+
+          row += 1;
+          caseIndex += 1;
+
+          if (batch_starts.has(caseIndex)) {
+            // For all-or-nothing (ICPC), set last case of batch to 1.
+            if ($("#problem-type").val() == "ICPC") {
+              $("#id_cases-"+(row-1)+"-points").val('1').change();
+            }
+            $("#id_cases-"+row+"-type").val('E').change();
+            row += 1;
+          }
+        }
+
+        // Second: Use existing test cases with generator args
+        for (var i = 0; i < existingGeneratorCount; i++) {
+          if (batch_starts.has(caseIndex)) {
+            var $sRow = $("#id_cases-"+row+"-type").val('S').change().closest('tr');
+            // Set batch_scoring mode from the selected problem type
+            var batchMode = $("#problem-type").val();
+            $sRow.find('select[id$=batch_scoring]').val(
+              batchMode === 'MIN' ? 'min' : 'sum'
+            ).change();
+            row += 1;
+          }
+
+          // Use existing generator args
+          var $generatorInput = $("#id_cases-"+row+"-generator_args");
+          $generatorInput.val(existingGeneratorArgs[i]);
+
+          // Set generated file names
+          $("#id_cases-"+row+"-input_file").val('existing_gen_case' + (i + 1) + '.in');
+          $("#id_cases-"+row+"-output_file").val('existing_gen_case' + (i + 1) + '.out');
+
+          // Update display for generator args
+          var $container = $generatorInput.closest('.generator-args-container');
+          var $icon = $container.find('.generator-args-icon');
+          $icon.hide();
+          $generatorInput.removeClass('generator-args-hidden').show();
+
+          // Set points
+          // ICPC: [0,...,0,1] — earlier cases have 0 weight.
+          // SUM / MIN: [1,...,1] — equal weights, all cases contribute.
+          if ($("#problem-type").val() == "ICPC") {
+            $("#id_cases-"+row+"-points").val('0').change();
+          } else {
+            $("#id_cases-"+row+"-points").val('1').change();
+          }
+
+          row += 1;
+          caseIndex += 1;
+
+          if (batch_starts.has(caseIndex)) {
+            if ($("#problem-type").val() == "ICPC") {
+              $("#id_cases-"+(row-1)+"-points").val('1').change();
+            }
+            $("#id_cases-"+row+"-type").val('E').change();
+            row += 1;
+          }
+        }
+
+        // Third: Create test cases from generator script (without test files)
+        for (var i = 0; i < newGeneratorCount; i++) {
+          if (batch_starts.has(caseIndex)) {
+            var $sRow = $("#id_cases-"+row+"-type").val('S').change().closest('tr');
+            // Set batch_scoring mode from the selected problem type
+            var batchMode = $("#problem-type").val();
+            $sRow.find('select[id$=batch_scoring]').val(
+              batchMode === 'MIN' ? 'min' : 'sum'
+            ).change();
+            row += 1;
+          }
+
+          // Set generated file names
+          $("#id_cases-"+row+"-input_file").val('new_gen_case' + (i + 1) + '.in');
+          $("#id_cases-"+row+"-output_file").val('new_gen_case' + (i + 1) + '.out');
+
+          // Set generator args from script
+          var args = scriptLines[i].trim();
+          if (args) {
+            var $generatorInput = $("#id_cases-"+row+"-generator_args");
+            $generatorInput.val(args);
+
+            // Update display for generator args
+            var $container = $generatorInput.closest('.generator-args-container');
+            var $icon = $container.find('.generator-args-icon');
+            $icon.hide();
+            $generatorInput.removeClass('generator-args-hidden').show();
+          }
+
+          // Set points
+          // ICPC: [0,...,0,1] — earlier cases have 0 weight.
+          // SUM / MIN: [1,...,1] — equal weights, all cases contribute.
+          if ($("#problem-type").val() == "ICPC") {
+            $("#id_cases-"+row+"-points").val('0').change();
+          } else {
+            $("#id_cases-"+row+"-points").val('1').change();
+          }
+
+          row += 1;
+          caseIndex += 1;
+
+          if (batch_starts.has(caseIndex)) {
+            if ($("#problem-type").val() == "ICPC") {
+              $("#id_cases-"+(row-1)+"-points").val('1').change();
+            }
+            $("#id_cases-"+row+"-type").val('E').change();
+            row += 1;
+          }
+        }
+
+        update_select2();
+
+        // Update generator args displays for all newly created rows
+        setTimeout(function() {
+          updateAllGeneratorArgsDisplays();
+        }, 100);
+
+        return false;
+      });
+
+      var oldIndex;
+      $('#case-table tbody').sortable({
+        itemSelector: 'tr',
+        handle: 'i.fa-ellipsis-v',
+        start: function (event, ui) {
+          $item = ui.item;
+          oldIndex = $item.index();
+        },
+        stop: function (event, ui) {
+          $item = ui.item;
+          var newIndex = $item.index();
+          if (newIndex > oldIndex) {
+            var order = parseInt($item.parent().children().slice(oldIndex, newIndex).each(function () {
+              var $order = $(this).find('input[id$=order]');
+              $order.val(parseInt($order.val()) - 1).siblings('span.order').text($order.val());
+            }).last().after($item).find('input[id$=order]').val());
+            $item.find('input[id$=order]').val(order + 1).siblings('span.order').text(order + 1);
+          } else if (newIndex < oldIndex) {
+            var order = parseInt($item.parent().children().slice(newIndex + 1, oldIndex + 1).each(function () {
+              var $order = $(this).find('input[id$=order]');
+              $order.val(parseInt($order.val()) + 1).siblings('span.order').text($order.val());
+            }).first().before($item).find('input[id$=order]').val());
+            $item.find('input[id$=order]').val(order - 1).siblings('span.order').text(order - 1);
+          }
+          if (newIndex != oldIndex)
+            handle_table_reorder();
+        }
+      });
+
+      $('#delete-all-btn').click(function(e) {
+        e.preventDefault();
+        $("#case-table tbody:first tr").filter(':visible').each(function() {
+          var $tr = $(this);
+          var $delete = $tr.find('input[id$=DELETE]');
+          if ($delete.length) {
+            if ($tr.find('.remove-row-btn').attr('data-has-pk') === 'true') {
+              $delete.prop('checked', true);
+              $tr.hide();
+            } else {
+              $tr.remove();
+              var n = parseInt($total.val(), 10);
+              if (n > 0) $total.val(n - 1);
+            }
+          }
+        });
+      });
+
+      // Auto-detect batch mode from existing rows:
+      //   MIN  → any type=S row has batch_scoring=min
+      //   ICPC → first in-batch C row has points=0, OR
+      //          no batches and standalone C rows have all-but-one points=0
+      //   SUM  → otherwise
+      (function() {
+        var mode = null;
+        var inBatch = false;
+        var sawBatch = false;
+        var standaloneRows = 0;
+        var standaloneZeroPts = 0;
+        $('[id$="-type"]').each(function() {
+          var rowPrefix = this.id.replace(/-type$/, '');
+          var type = $(this).val();
+          var pts = parseFloat($('#' + rowPrefix + '-points').val()) || 0;
+          if (type === 'S') {
+            sawBatch = true;
+            inBatch = true;
+            if ($('#' + rowPrefix + '-batch_scoring').val() === 'min') {
+              mode = 'MIN';
+              return false; // break
+            }
+          } else if (type === 'E') {
+            inBatch = false;
+          } else if (type === 'C') {
+            if (inBatch) {
+              // First in-batch C decides ICPC vs SUM
+              if (mode === null) mode = (pts > 0) ? 'SUM' : 'ICPC';
+            } else {
+              standaloneRows++;
+              if (pts === 0) standaloneZeroPts++;
+            }
+          }
+        });
+        if (mode === null) {
+          // No batches (or batches with no inner C): infer from standalone rows
+          if (standaloneRows >= 2 && standaloneZeroPts === standaloneRows - 1) {
+            mode = 'ICPC';
+          } else {
+            mode = 'SUM';
+          }
+        }
+        $('#problem-type').val(mode);
+      })();
+      $("#problem-type").select2();
+
+      // Change batch_starts based on current tests
+      function update_batch_starts() {
+        var numBatches = 0;
+        var batchStarts = [];
+        $("#case-table tbody:first tr").each(function(idx) {
+          $select = $('#id_cases-' + idx + '-type');
+          if ($select.val() == 'S') {
+            batchStarts.push(idx + 1 - 2 * numBatches);
+            numBatches++;
+          }
+        });
+        if (batchStarts) {
+          $("#batch_starts").val(batchStarts.join(', '));
+        }
+      }
+      update_batch_starts();
+
+      // Handle generator args icon/input display
+      function setupGeneratorArgsDisplay() {
+        $('.generator-args-container').each(function() {
+          var $container = $(this);
+          var $input = $container.find('input[name*="generator_args"]');
+          var $icon = $container.find('.generator-args-icon');
+
+          function updateDisplay() {
+            var hasValue = $input.val() && $input.val().trim();
+            if (hasValue) {
+              $icon.hide();
+              $input.removeClass('generator-args-hidden').show();
+            } else {
+              $icon.show();
+              $input.addClass('generator-args-hidden');
+            }
+          }
+
+          // Initial setup
+          updateDisplay();
+
+          // Click icon to show input
+          $icon.click(function() {
+            $icon.hide();
+            $input.removeClass('generator-args-hidden').show().focus();
+          });
+
+          // Hide input if empty when focus lost
+          $input.blur(function() {
+            setTimeout(function() {
+              updateDisplay();
+            }, 100);
+          });
+
+          // Update display when value changes (including programmatic changes)
+          $input.on('input change', function() {
+            updateDisplay();
+          });
+
+          // Make updateDisplay available on the input element for external calls
+          $input.data('updateDisplay', updateDisplay);
+        });
+      }
+
+      // Global function to update all generator args displays
+      window.updateAllGeneratorArgsDisplays = function() {
+        $('.generator-args-container input[name*="generator_args"]').each(function() {
+          var updateFn = $(this).data('updateDisplay');
+          if (updateFn) {
+            updateFn();
+          }
+        });
+      };
+
+      // Setup initial generator args display
+      setupGeneratorArgsDisplay();
+
+      // Global modal event handlers (set up once)
+      $('#cancel-generator-script').click(function() {
+        closeGeneratorScriptModal();
+      });
+
+      $('#save-generator-script').click(function() {
+        saveGeneratorScript();
+      });
+
+      $('#cancel-testcase-json').click(function() {
+        closeTestcaseJsonModal();
+      });
+
+      $('#fill-testcase-json').click(function() {
+        if (fillTestcaseJsonTestcases($('#testcase-json-textarea').val(), true)) {
+          closeTestcaseJsonModal();
+        }
+      });
+
+      $('#toggle-testcase-json-help').click(function() {
+        var $help = $('#testcase-json-help');
+        $help.toggle();
+        $(this).text($help.is(':visible') ? '{{_("Hide examples")}}' : '{{_("Show examples")}}');
+      });
+
+      $('#testcase-json-textarea').on('input scroll', function() {
+        updateTestcaseJsonLineNumbers();
+
+        var lineNumbers = $('#testcase-json-line-numbers');
+        lineNumbers.scrollTop($(this).scrollTop());
+      });
+
+      // Update line numbers when typing
+      $('#generator-script-textarea').on('input scroll', function() {
+        updateLineNumbers();
+
+        // Sync scroll position
+        var lineNumbers = $('#line-numbers');
+        lineNumbers.scrollTop($(this).scrollTop());
+      });
+
+      // Close modal when clicking outside
+      $('#generator-script-modal').click(function(e) {
+        if (e.target === this) {
+          closeGeneratorScriptModal();
+        }
+      });
+
+      $('#testcase-json-modal').click(function(e) {
+        if (e.target === this) {
+          closeTestcaseJsonModal();
+        }
+      });
+
+      // Setup generator args display for new rows
+      $table.on('add-row', function (e, $tr) {
+        $tr.find('.generator-args-container').each(function() {
+          var $container = $(this);
+          var $input = $container.find('input[name*="generator_args"]');
+          var $icon = $container.find('.generator-args-icon');
+
+          function updateDisplay() {
+            var hasValue = $input.val() && $input.val().trim();
+            if (hasValue) {
+              $icon.hide();
+              $input.removeClass('generator-args-hidden').show();
+            } else {
+              $icon.show();
+              $input.addClass('generator-args-hidden');
+            }
+          }
+
+          // Initial setup for new row
+          updateDisplay();
+
+          $icon.click(function() {
+            $icon.hide();
+            $input.removeClass('generator-args-hidden').show().focus();
+          });
+
+          $input.blur(function() {
+            setTimeout(function() {
+              updateDisplay();
+            }, 100);
+          });
+
+          $input.on('input change', function() {
+            updateDisplay();
+          });
+
+          // Make updateDisplay available on the input element for external calls
+          $input.data('updateDisplay', updateDisplay);
+        });
+      });
+
+    }).change();
+  </script>
+  {% include 'fine_uploader/script.html' %}
+{% endblock %}
+
+{% block edit_media %}
+  {{ data_form.media.css }}
+  <link href="{{ static ('fine-uploader/fine-uploader.css') }}" rel="stylesheet">
+{% endblock %}
+
+{% block edit_content %}
+  {% if data_form.instance.has_yml %}
+    <div class="title-line-action" style="margin-bottom: 10px;">
+      <a href="{{ url('problem_data_init', problem.code) }}">{{ _('View YAML') }}</a>
+    </div>
+  {% endif %}
+  {% if data_form.instance.feedback %}
+    <ul class="errorlist">
+      <li>{{ data_form.instance.feedback }}</li>
+    </ul>
+  {% endif %}
+
+  <div class="help-section">
+    <i class="fa fa-info-circle"></i>
+    <strong>{{ _('Test Data Setup') }}:</strong>
+    <a href="{{ url('test_data_instructions') }}" target="_blank">
+      {{ _('View Instructions') }} <i class="fa fa-external-link"></i>
+    </a>
+  </div>
+
+  <form class="problem-data-form" action="" method="POST" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ cases_formset.management_form }}
+    <table class="table">
+      {{ data_form.as_table() }}
+      <th>
+        <label>{{_('Autofill testcases')}}:</label>
+      </th>
+      <td>
+        <div>
+          {{_('Batch mode')}}:
+          <select id="problem-type" style="width: 11em">
+            <option value="SUM" selected>{{_('Sum (VOI)')}}</option>
+            <option value="ICPC">{{_('All or 0 (ICPC)')}}</option>
+            <option value="MIN">{{_('Min (IOI)')}}</option>
+          </select>
+          <a id="fill-testcases" href="#">
+            <i class="fa fa-circle"></i>
+            {{_('Fill testcases')}}
+          </a>
+        </div>
+        <div style="margin-top: 1em;">
+          {{_("Batch start positions")}}:
+          <input id="batch_starts">
+        </div>
+        <div>
+          {{_("Leave empty if not use batch. If you want to divide to three batches [1, 4], [5, 8], [9, 10], enter: 1, 5, 9")}}
+        </div>
+        <div class="testcase-json-container" style="margin-top: 1em;">
+          <button type="button" class="btn btn-sm" id="open-custom-testcase-json">
+            <i class="fa fa-code"></i> {{_("Or use custom JSON")}}
+          </button>
+        </div>
+      </td>
+    </table>
+
+    <!-- Generator Script Modal -->
+    <div id="generator-script-modal" style="display: none;">
+      <div class="modal-content">
+        <h3>{{_('Generator Script')}}</h3>
+        <p>{{_('Enter generator arguments for test cases. Each line represents arguments for one test case.')}}</p>
+        <div class="textarea-with-lines">
+          <div id="line-numbers"></div>
+          <textarea id="generator-script-textarea" rows="15" style="width: 100%; font-family: monospace; padding: 10px; border: none; outline: none; resize: vertical;"></textarea>
+        </div>
+        <div class="modal-buttons" style="margin-top: 15px; text-align: right;">
+          <button type="button" class="btn" id="cancel-generator-script">{{_('Cancel')}}</button>
+          <button type="button" class="action-btn" id="save-generator-script">{{_('Save')}}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Testcase JSON Modal -->
+    <div id="testcase-json-modal" style="display: none;">
+      <div class="modal-content">
+        <h3>{{_('Custom testcase JSON')}}</h3>
+        <p>
+          {{_('Paste JSON to fill testcase rows. Each row should use either testcase or generator_args, not both.')}}
+        </p>
+        <button type="button" class="btn btn-sm" id="toggle-testcase-json-help">{{_('Show examples')}}</button>
+        <div id="testcase-json-help" style="display: none; margin-top: 1em;">
+          <p>
+            {{_('This only fills rows on this page; click Apply! after reviewing the generated testcases.')}}
+          </p>
+          <p>{{_('Non-batched format')}}:</p>
+          <pre style="white-space: pre-wrap;">[
+  {"score": 1, "testcase": "1"},
+  {"score": 1, "generator_args": "2 --small"},
+  {"score": 2, "testcase": "complete-small-01"}
+]</pre>
+          <p>{{_('Example format with two batches')}}:</p>
+          <pre style="white-space: pre-wrap;">[
+  {"score": 21, "testcases": ["subtask1-01", "subtask1-02", "subtask1-03"]},
+  {"score": 79, "testcases": [
+    "subtask2-01",
+    {"generator_args": "2 --large"},
+    "subtask2-03"
+  ]}
+]</pre>
+        </div>
+        <div class="textarea-with-lines">
+          <div id="testcase-json-line-numbers"></div>
+          <textarea id="testcase-json-textarea" rows="15" style="width: 100%; font-family: monospace; padding: 10px; border: none; outline: none; resize: vertical;"></textarea>
+        </div>
+        <div id="testcase-json-error" class="red" style="display: none; margin-top: 0.75em;"></div>
+        <div class="modal-buttons" style="margin-top: 15px; text-align: right;">
+          <button type="button" class="btn" id="cancel-testcase-json">{{_('Cancel')}}</button>
+          <button type="button" class="action-btn" id="fill-testcase-json">{{_('Fill testcases')}}</button>
+        </div>
+      </div>
+    </div>
+
+    {{ signature_grader_formset.management_form }}
+    <div id="signature-grader-table" style="display: none; margin-top: 1em;">
+      <h3> {{_("IOI Signature Graders")}} </h3>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>{{ _('Language') }}</th>
+            <th>{{ _('Handler') }}</th>
+            <th>{{ _('Header') }}</th>
+            {% if signature_grader_formset.can_delete %}
+              <th>{{ _('Delete?') }}</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for form in signature_grader_formset %}
+            {% if form.non_field_errors() %}
+              <tr>
+                <td colspan="4">
+                  <ul class="errorlist">
+                    {% for error in form.non_field_errors() %}
+                      <li>{{ error }}</li>
+                    {% endfor %}
+                  </ul>
+                </td>
+              </tr>
+            {% endif %}
+            <tr>
+              <td>
+                {{ form.id }}
+                {{ form.language.errors }}
+                {{ form.language }}
+              </td>
+              <td>
+                {{ form.handler.errors }}
+                {{ form.handler }}
+              </td>
+              <td>
+                {{ form.header.errors }}
+                {{ form.header }}
+              </td>
+              {% if signature_grader_formset.can_delete %}
+                <td>{{ form.DELETE }}</td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <input type="submit" value="{{ _('Apply!') }}" class="action-btn" id="submit-button">
+
+    <h3> {{_("Test Cases")}} </h3>
+    <table id="case-table" class="table">
+      <thead>
+        <tr>
+          <th class="order-column"></th>
+          <th class="type-column">{{ _('Type') }}</th>
+          <th>{{ _('Input file') }}</th>
+          <th>{{ _('Output file') }}</th>
+          <th>{{ _('Points') }}</th>
+          <th>{{ _('Pretest?') }}</th>
+          <th>{{ _('Generator Args') }}</th>
+          {% if cases_formset.can_delete %}
+            <th>{{ _('Delete?') }}
+              <br>
+              <button type="button" id="delete-all-btn" title="{{ _('Remove all') }}">
+                <i class="fa fa-times red"></i>
+              </button>
+            </th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for form in all_case_forms %}
+          {% if form.non_field_errors() %}
+            <tr>
+              <td colspan="{{ 10 + cases_formset.can_delete }}">{{ form.non_field_errors() }}</td>
+            </tr>
+          {% endif %}
+          {% if form.prefix and '__prefix__' in form.prefix %}
+            </tbody>
+            <tbody class="extra-row-body" style="display: none">
+          {% endif %}
+          <tr data-type="{{ form['type'].value() }}">
+            <td>
+              {{ form.id }}{{ form.order.errors }}
+              <span style="display:none">{{ form.order }}</span>
+              <i class="fa fa-fw fa-lg fa-ellipsis-v"></i>
+              <span class="order">{{ form['order'].value() or '' }}</span>
+            </td>
+            <td class="type-column">
+              {{ form.type.errors }}{{ form.type }}
+            </td>
+            <td{% if not (form.empty_permitted or form['type'].value() != 'C' or
+                form['input_file'].value() in valid_files) %} class="bad-file"{% endif %}>
+              {{ form.input_file.errors }}{{ form.input_file }}
+            </td>
+        <td{% if not (form.empty_permitted or form['type'].value() != 'C' or
+            form['output_file'].value() in valid_files) %} class="bad-file"{% endif %}>
+          {{ form.output_file.errors }}{{ form.output_file }}
+        </td>
+<td>
+  {{ form.points.errors }}{{ form.points }}
+  {{ form.batch_scoring.errors }}
+  <div class="batch-scoring-container" style="display:none; margin-top:2px;">
+    {{ form.batch_scoring }}
+  </div>
+</td>
+<td>{{ form.is_pretest.errors }}{{ form.is_pretest }}</td>
+<td>
+  {{ form.generator_args.errors }}
+  <div class="generator-args-container">
+    <i class="fa fa-plus generator-args-icon" title="Click to add generator arguments" style="display: none;"></i>
+    {{ form.generator_args }}
+  </div>
+</td>
+{% if cases_formset.can_delete %}
+  <td>
+    <span style="display:none">{{ form.DELETE }}</span>
+    <button type="button" class="remove-row-btn"
+            data-has-pk="{{ 'true' if form['id'].value() else 'false' }}"
+            title="{{ _('Remove') }}">
+      <i class="fa fa-times red"></i>
+    </button>
+  </td>
+{% endif %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+<input type="submit" value="{{ _('Apply!') }}" class="action-btn" id="submit-button">
+<div><a id="add-case-row" class="action-btn" href="#"><i class="fa fa-plus"></i> {{ _('Add new case') }}</a></div>
+</form>
+
+{% endblock %}

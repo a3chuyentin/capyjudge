@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+
+{% block body %}
+  <div id="login-panel">
+    <form action="" method="post" class="form-area">
+      {% csrf_token %}
+      {% if form.non_field_errors() or form.username.errors or form.password.errors %}
+        <div id="form-errors">
+          <p class="error">{{ _('Invalid username/email or password.') }}</p>
+        </div>
+      {% endif %}
+      <table border="0" style="text-align:left">
+        <tr>
+          <th><i class="fa fa-user fa-fw"></i>
+          </th>
+          <td>{{ form.username }}
+          </td>
+        </tr>
+        <tr>
+          <th><i class="fa fa-key fa-fw"></i>
+          </th>
+          <td>{{ form.password }}
+          </td>
+        </tr>
+      </table>
+      {% if 'captcha' in form.fields %}
+        <div style="margin-top: 0.5em">{{ form['captcha'] }}</div>
+        {% if form['captcha'].errors %}
+          <div class="form-field-error">{{ form['captcha'].errors }}</div>
+        {% endif %}
+      {% endif %}
+      <hr>
+      <button style="float:right;" type="submit" class="action-btn">{{ _('Login!') }}</button>
+      <input type="hidden" name="next" value="{{ next }}">
+    </form>
+    <br><a href="{{ url('password_reset') }}">{{ _('Forgot your password?') }}</a>
+
+    {% if form.has_google_auth or form.has_facebook_auth or form.has_github_auth %}
+      <h4>{{ _('Or log in with...') }}</h4>
+      {% if form.has_google_auth %}
+        <a href="{{ url('social:begin', "google-oauth2") }}?next={{ next }}" class="social google-icon">
+          <i class="fab fa-square-google-plus"></i>
+        </a>
+      {% endif %}
+      {% if form.has_facebook_auth %}
+        <a href="{{ url('social:begin', "facebook") }}?next={{ next }}" class="social facebook-icon">
+          <i class="fab fa-facebook-square"></i>
+        </a>
+      {% endif %}
+      {% if form.has_github_auth %}
+        <a href="{{ url('social:begin', "github-secure") }}?next={{ next }}" class="social github-icon">
+          <i class="fab fa-github-square"></i>
+        </a>
+      {% endif %}
+    {% endif %}
+  </div>
+{% endblock %}

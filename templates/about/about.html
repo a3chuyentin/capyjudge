@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+
+{% block body %}
+  {% if request.organization %}
+    {{ request.organization.about|markdown|reference|str|safe }}
+  {% else %}
+  {% endif %}
+{% endblock %}

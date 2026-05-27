@@ -1,0 +1,53 @@
+{% set layout = 'no_wrapper' %}
+{% extends "base.html" %}
+{% block title_row %}{% endblock %}
+{% block title_ruler %}{% endblock %}
+
+{% block media %}
+  <style>
+    #content {
+      width: 100%;
+      margin-left: 0;
+    }
+
+    @media(min-width: 800px) {
+      .middle-right-content {
+        margin-left: 15%;
+        display: flex;
+        margin-right: 2%;
+      }
+      .middle-right-content.no-left-sidebar {
+        margin-left: 2%;
+      }
+    }
+
+    @media(max-width: 799px) {
+      .middle-right-content {
+        display: block;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% macro make_tab_item(name, fa, url, text, force_new_page=False) %}
+  <a class="left-sidebar-item {% if page_type == name %}active{% endif %}" href="{{ url }}" id="{{ name }}-tab" {% if force_new_page%}data-force_new_page="1"{% endif %}>
+    <span class="sidebar-icon"><i class="{{ fa }}"></i></span>
+    <span class="sidebar-text">{{ text }}</span>
+  </a>
+{% endmacro %}
+
+{% block body %}
+  {% block before_posts %}{% endblock %}
+  <div id="three-col-container">
+    {% block left_sidebar %}{% endblock %}
+    <div class="middle-right-content {{'wrapper' if is_two_column}}">
+      {% block three_col_media %}{% endblock %}
+      <div class="middle-content">
+        {% block middle_title %}{% endblock %}
+        {% block middle_content %}{% endblock %}
+      </div>
+      {% block right_sidebar %}{% endblock %}
+    </div>
+  </div>
+  {% block after_posts %}{% endblock %}
+{% endblock %}

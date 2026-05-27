@@ -1,0 +1,122 @@
+{% extends "course/base.html" %}
+
+{% block two_col_media %}
+{% endblock %}
+
+{% block js_media %}
+  <script>
+    $(function() {
+      $('#search-org').select2({
+        placeholder: '{{ _("Group") }}',
+        allowClear: true,
+        width: '15em',
+      }).on('change', function() {
+        $(this).closest('form').submit();
+      });
+    });
+  </script>
+{% endblock %}
+
+{% block middle_content %}
+  <div class="course-grades-page">
+    <center>
+      <h2>{{content_title}}</h2>
+    </center>
+    <form class="grades-filter-form" method="get" action="">
+      {% if organizations is defined and organizations %}
+        <select id="search-org" name="orgs" multiple>
+          {% for org in organizations %}
+            <option value="{{ org.id }}"{% if org.id in (org_query or []) %} selected{% endif %}>
+              {{ org.name }}
+            </option>
+          {% endfor %}
+        </select>
+      {% endif %}
+      <label>
+        <input type="checkbox" name="friend" value="1"
+               {% if friend_only %} checked{% endif %}
+               onchange="this.form.submit()">
+        {{ _("Friends") }}
+      </label>
+      <input type="text" name="search" placeholder="{{_('Search')}}" value="{{ search_query or '' }}">
+      <button type="submit" hidden></button>
+    </form>
+    <div class="table-container">
+      <table class="table striped" id="users-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>{{_('Student')}}</th>
+            <th>{{_('Total')}}</th>
+            {% for lesson in lessons %}
+              <th class="points" title="{{lesson.title}}">
+                <a href="{{url('course_grades_lesson', course.slug, lesson.id)}}">
+                  L{{ loop.index0 + 1 }}
+                  <div class="point-denominator">{{lesson.points}}</div>
+                </a>
+              </th>
+            {% endfor %}
+            {% for course_contest in course_contests %}
+              <th class="points" title="{{course_contest.contest.name}}">
+                <a href="{{url('contest_ranking', course_contest.contest.key)}}" target="_blank">
+                  C{{ loop.index0 + 1 }}
+                  <div class="point-denominator">{{course_contest.points}}</div>
+                </a>
+              </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for student in grade_total.keys() %}
+            {% set grade_lessons_student = grade_lessons.get(student) %}
+            {% set grade_contests_student = grade_contests.get(student) %}
+            {% set grade_total_student = grade_total.get(student) %}
+            <tr>
+              <td class="rank">{{ global_rank.get(student.id, '') }}</td>
+              <td class="user-name">
+                <div>
+                  {{link_user(student)}}
+                </div>
+                <div>
+                  {{student.first_name or ""}}
+                </div>
+              </td>
+              <td class="total-score">
+                {% if grade_total_student %}
+                  {{ grade_total_student['percentage'] | floatformat(0) }}%
+                {% else %}
+                  0
+                {% endif %}
+              </td>
+              {% for lesson in lessons %}
+                {% set val = grade_lessons_student.get(lesson.id) %}
+                <td class="partial-score">
+                  {% if val and val['total_points'] %}
+                    {{ (val['achieved_points'] / val['total_points'] * lesson.points) | floatformat(0) }}
+                  {% else %}
+                    0
+                  {% endif %}
+                </td>
+              {% endfor %}
+              {% for course_contest in course_contests %}
+                {% set val = grade_contests_student.get(course_contest.id) %}
+                <td class="partial-score">
+                  {% if val and val['total_points'] %}
+                    {{ (val['achieved_points'] / val['total_points'] * course_contest.points) | floatformat(0) }}
+                  {% else %}
+                    0
+                  {% endif %}
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if page_obj and page_obj.num_pages > 1 %}
+      <div class="grades-pagination">
+        {% include "list-pages.html" %}
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

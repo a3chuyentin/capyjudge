@@ -1,0 +1,802 @@
+{% extends "three-column-content.html" %}
+
+{% block three_col_media %}
+  {{ form.media }}
+{# Styles are in resources/quiz.scss - .question-create-container #}
+{% endblock %}
+
+{% block js_media %}
+  <script src="{{ static('quiz.js') }}"></script>
+  <script src="{{ static('jquery-ui.min.js') }}"></script>
+  <script src="{{ static('pagedown/Markdown.Converter.js') }}"></script>
+  <script src="{{ static('pagedown-extra/pagedown/Markdown.Converter.js') }}"></script>
+  <script src="{{ static('pagedown/Markdown.Sanitizer.js') }}"></script>
+  <script src="{{ static('pagedown/Markdown.Editor.js') }}"></script>
+  <script src="{{ static('pagedown-extra/Markdown.Extra.js') }}"></script>
+  <script>
+    $(function () {
+      var questionType = $('#id_question_type').val();
+      var choiceEditor = null;
+
+      function updateGradingStrategyVisibility() {
+        var type = $('#id_question_type').val();
+        var $gradingField = $('#id_grading_strategy').closest('.quiz-field-row');
+        if (type === 'MA') {
+          $gradingField.show();
+        } else {
+          $gradingField.hide();
+        }
+      }
+
+      function initChoiceEditor() {
+        var type = $('#id_question_type').val();
+        var $choicesField = $('#id_choices').closest('.quiz-field-row');
+        var $correctField = $('#id_correct_answers').closest('.quiz-field-row');
+
+      // Show/hide grading strategy field (only for MA questions)
+        updateGradingStrategyVisibility();
+
+      // Show/hide based on question type
+        if (type === 'MC' || type === 'MA' || type === 'TF') {
+        // Parse existing values
+          var choices = [];
+          var correctAnswers = [];
+
+          try {
+            var choicesVal = $('#id_choices').val();
+            if (choicesVal) choices = JSON.parse(choicesVal);
+          } catch (e) { }
+
+          try {
+            var correctVal = $('#id_correct_answers').val();
+            if (correctVal) {
+              var parsed = JSON.parse(correctVal);
+              if (parsed.answers) {
+                if (Array.isArray(parsed.answers)) {
+                  correctAnswers = parsed.answers;
+                } else {
+                  correctAnswers = [parsed.answers];
+                }
+              }
+            }
+          } catch (e) { }
+
+        // TF, MC, MA all work the same - user adds choices manually
+        // No auto-creation of choices for any type
+
+        // Hide raw JSON fields and SA editor
+          $choicesField.hide();
+          $correctField.hide();
+          $('#sa-editor-container').remove();
+
+        // Show choice editor with title
+          if (!$('#choice-editor-section').length) {
+            var sectionHtml = '<div id="choice-editor-section" class="choice-editor-section">';
+            sectionHtml += '<h4><i class="fa fa-list-ul"></i> {{ _("Answer Choices") }}</h4>';
+            sectionHtml += '<div id="choice-editor-container"></div>';
+            sectionHtml += '</div>';
+          // Insert after correct_answers field (keeps content + choices together)
+            $correctField.after(sectionHtml);
+          }
+
+          choiceEditor = new ChoiceEditor({
+            container: '#choice-editor-container',
+            inputField: '#id',
+            questionType: type,
+            choices: choices,
+            correctAnswers: correctAnswers
+          });
+
+        // Sync to hidden fields on change
+          $('#choice-editor-container').on('input change', function () {
+            syncChoiceEditor();
+          });
+
+        } else if (type === 'SA') {
+        // Short Answer - show user-friendly editor
+          $('#choice-editor-section').remove();
+          $choicesField.hide();
+          $correctField.hide();
+
+          initShortAnswerEditor();
+
+        } else {
+        // ES - hide all answer fields
+          $('#choice-editor-section').remove();
+          $('#sa-editor-container').remove();
+          $choicesField.hide();
+          $correctField.hide();
+        }
+      }
+
+      function initShortAnswerEditor() {
+      // Parse existing correct_answers
+        var saType = 'exact';
+        var saAnswers = [];
+        var saCaseSensitive = false;
+
+        try {
+          var correctVal = $('#id_correct_answers').val();
+          if (correctVal) {
+            var parsed = JSON.parse(correctVal);
+            saType = parsed.type || 'exact';
+            saAnswers = parsed.answers || [];
+            saCaseSensitive = parsed.case_sensitive || false;
+          }
+        } catch (e) { }
+
+      // Build the editor HTML
+        var html = '<div id="sa-editor-container" class="sa-editor">';
+        html += '<h4>{{ _("Correct Answers Configuration") }}</h4>';
+
+      // Match Type
+        html += '<div class="sa-field">';
+        html += '<label for="sa-type">{{ _("Match Type") }}:</label>';
+        html += '<select id="sa-type" class="sa-select">';
+        html += '<option value="exact"' + (saType === 'exact' ? ' selected' : '') + '>{{ _("Exact Match") }}</option>';
+        html += '<option value="regex"' + (saType === 'regex' ? ' selected' : '') + '>{{ _("Regular Expression") }}</option>';
+        html += '</select>';
+        html += '<span class="sa-help">{{ _("Exact: student answer must match one of the answers. Regex: use regular expression patterns.") }}</span>';
+        html += '</div>';
+
+      // Case Sensitive
+        html += '<div class="sa-field">';
+        html += '<label>';
+        html += '<input type="checkbox" id="sa-case-sensitive"' + (saCaseSensitive ? ' checked' : '') + '>';
+        html += ' {{ _("Case Sensitive") }}';
+        html += '</label>';
+        html += '</div>';
+
+      // Answers list
+        html += '<div class="sa-field">';
+        html += '<label>{{ _("Accepted Answers") }}:</label>';
+        html += '<div id="sa-answers-list">';
+        if (saAnswers.length === 0) {
+          html += renderSaAnswerRow('', 0);
+        } else {
+          for (var i = 0; i < saAnswers.length; i++) {
+            html += renderSaAnswerRow(saAnswers[i], i);
+          }
+        }
+        html += '</div>';
+        html += '<button type="button" class="btn btn-sm btn-success" id="sa-add-answer">';
+        html += '<i class="fa fa-plus"></i> {{ _("Add Answer") }}</button>';
+        html += '</div>';
+
+        html += '</div>';
+
+        var $correctField = $('#id_correct_answers').closest('.quiz-field-row');
+        if (!$('#sa-editor-container').length) {
+          $correctField.after(html);
+        } else {
+          $('#sa-editor-container').replaceWith(html);
+        }
+
+        bindSaEditorEvents();
+        initSaAutoResize();
+      }
+
+      function renderSaAnswerRow(value, index) {
+        var escapedValue = $('<div>').text(value).html();
+        var html = '<div class="sa-answer-row" data-index="' + index + '">';
+        html += '<div class="sa-row-controls">';
+        html += '<textarea class="sa-answer-input auto-resize-textarea" rows="1" placeholder="{{ _("Enter an accepted answer...") }}">' + escapedValue + '</textarea>';
+        html += '<button type="button" class="btn btn-sm expand-sa-btn" title="{{ _("Expand editor") }}"><i class="fa fa-expand"></i></button>';
+        html += '<button type="button" class="btn btn-sm btn-danger sa-remove-answer"><i class="fa fa-times"></i></button>';
+        html += '</div>';
+        html += '<div class="sa-expanded-editor" style="display: none;"></div>';
+        html += '</div>';
+        return html;
+      }
+
+      function initSaAutoResize() {
+        $('#sa-editor-container .auto-resize-textarea').each(function() {
+          var textarea = this;
+          autoResizeTextarea(textarea);
+          $(textarea).off('input.autoresize').on('input.autoresize', function() {
+            autoResizeTextarea(this);
+          });
+        });
+      }
+
+      var saExpandedEditors = {};
+
+      function bindSaEditorEvents() {
+        var $container = $('#sa-editor-container');
+
+      // Unbind first to prevent duplicates
+        $container.off('click', '#sa-add-answer');
+        $container.off('click', '.sa-remove-answer');
+        $container.off('click', '.expand-sa-btn');
+        $container.off('click', '.collapse-sa-btn');
+        $container.off('input change', '#sa-type, #sa-case-sensitive, .sa-answer-input');
+
+      // Add answer
+        $container.on('click', '#sa-add-answer', function () {
+          var index = $('#sa-answers-list .sa-answer-row').length;
+          $('#sa-answers-list').append(renderSaAnswerRow('', index));
+          initSaAutoResize();
+          syncSaEditor();
+        });
+
+      // Remove answer
+        $container.on('click', '.sa-remove-answer', function () {
+          var $row = $(this).closest('.sa-answer-row');
+          if ($('#sa-answers-list .sa-answer-row').length > 1) {
+            $row.remove();
+          } else {
+            $row.find('.sa-answer-input').val('');
+          }
+          syncSaEditor();
+        });
+
+      // Expand answer editor with PageDown toolbar
+        $container.on('click', '.expand-sa-btn', function () {
+          var $row = $(this).closest('.sa-answer-row');
+          expandSaEditor($row);
+        });
+
+      // Collapse answer editor
+        $container.on('click', '.collapse-sa-btn', function () {
+          var $row = $(this).closest('.sa-answer-row');
+          collapseSaEditor($row);
+        });
+
+      // Sync on any change
+        $container.on('input change', '#sa-type, #sa-case-sensitive, .sa-answer-input', function () {
+          syncSaEditor();
+        });
+      }
+
+      function expandSaEditor($row) {
+        var $controls = $row.find('.sa-row-controls');
+        var $expandedContainer = $row.find('.sa-expanded-editor');
+        var $textarea = $controls.find('.sa-answer-input');
+        var $expandBtn = $controls.find('.expand-sa-btn');
+        var index = $row.data('index');
+
+        // Already expanded?
+        if ($expandedContainer.is(':visible')) return;
+
+        // Create the expanded editor with PageDown toolbar
+        var editorId = 'sa-editor-' + index + '-' + Date.now();
+        var currentValue = $textarea.val();
+        var escapedValue = $('<div>').text(currentValue).html();
+
+        var previewId = editorId + '-preview';
+        var expandedHtml = '<div class="wmd-wrapper sa-wmd-wrapper">';
+        expandedHtml += '<div class="sa-expanded-header">';
+        expandedHtml += '<div id="wmd-button-bar-' + editorId + '" class="wmd-button-bar"></div>';
+        expandedHtml += '<button type="button" class="btn btn-sm collapse-sa-btn" title="{{ _("Collapse") }}"><i class="fa fa-compress"></i></button>';
+        expandedHtml += '</div>';
+        expandedHtml += '<textarea id="wmd-input-' + editorId + '" class="wmd-input sa-expanded-textarea">' + escapedValue + '</textarea>';
+        expandedHtml += '</div>';
+        // Preview panel
+        expandedHtml += '<div id="' + previewId + '" class="dmmd-preview sa-answer-preview" data-preview-url="{{ url("blog_preview") }}" data-textarea-id="wmd-input-' + editorId + '">';
+        expandedHtml += '<div class="dmmd-preview-update"><i class="fa fa-refresh"></i> {{ _("Update Preview") }}</div>';
+        expandedHtml += '<div class="dmmd-preview-content content-description"></div>';
+        expandedHtml += '</div>';
+
+        $expandedContainer.html(expandedHtml);
+        $expandedContainer.show();
+
+        // Hide the minimal textarea but keep controls visible
+        $textarea.hide();
+        $expandBtn.hide();
+
+        // Initialize PageDown editor if available
+        if (typeof Markdown !== 'undefined') {
+          var converter = Markdown.getSanitizingConverter();
+          if (typeof Markdown.Extra !== 'undefined') {
+            Markdown.Extra.init(converter, { extensions: 'all' });
+          }
+          var editor = new Markdown.Editor(converter, '-' + editorId, {});
+          editor.run();
+          saExpandedEditors[index] = editor;
+        }
+
+        // Register preview panel
+        var $preview = $('#' + previewId);
+        if ($preview.length && typeof register_dmmd_preview === 'function') {
+          register_dmmd_preview($preview);
+        }
+
+        // Sync expanded textarea with the minimal one
+        var $expandedTextarea = $expandedContainer.find('.sa-expanded-textarea');
+        $expandedTextarea.on('input', function() {
+          $textarea.val($(this).val());
+          syncSaEditor();
+        });
+
+        // Focus the expanded textarea
+        $expandedTextarea.focus();
+      }
+
+      function collapseSaEditor($row) {
+        var $controls = $row.find('.sa-row-controls');
+        var $expandedContainer = $row.find('.sa-expanded-editor');
+        var $textarea = $controls.find('.sa-answer-input');
+        var $expandBtn = $controls.find('.expand-sa-btn');
+        var $expandedTextarea = $expandedContainer.find('.sa-expanded-textarea');
+        var index = $row.data('index');
+
+        // Sync value back
+        if ($expandedTextarea.length) {
+          $textarea.val($expandedTextarea.val());
+          syncSaEditor();
+        }
+
+        // Clear expanded editor
+        $expandedContainer.html('').hide();
+        delete saExpandedEditors[index];
+
+        // Show minimal textarea
+        $textarea.show();
+        $expandBtn.show();
+
+        // Resize the textarea
+        autoResizeTextarea($textarea[0]);
+      }
+
+      function syncSaEditor() {
+        var type = $('#sa-type').val() || 'exact';
+        var caseSensitive = $('#sa-case-sensitive').is(':checked');
+        var answers = [];
+
+        $('#sa-answers-list .sa-answer-input').each(function () {
+          var val = $(this).val().trim();
+          if (val) {
+            answers.push(val);
+          }
+        });
+
+        var correctAnswers = {
+          type: type,
+          answers: answers,
+          case_sensitive: caseSensitive
+        };
+
+        $('#id_correct_answers').val(JSON.stringify(correctAnswers));
+      }
+
+      function syncChoiceEditor() {
+        if (!choiceEditor) return;
+
+        var choices = choiceEditor.choices;
+        var correct = choiceEditor.correctAnswers;
+        var type = $('#id_question_type').val();
+
+        $('#id_choices').val(JSON.stringify(choices));
+
+        if (type === 'MA') {
+          $('#id_correct_answers').val(JSON.stringify({ answers: correct }));
+        } else {
+          $('#id_correct_answers').val(JSON.stringify({ answers: correct[0] || '' }));
+        }
+      }
+
+    // Initialize on page load
+      initChoiceEditor();
+
+    // Re-initialize when question type changes
+      $('#id_question_type').on('change', function () {
+        initChoiceEditor();
+      });
+
+    // Sync before form submit
+      $('form.question-form').on('submit', function () {
+        var type = $('#id_question_type').val();
+        if (type === 'MC' || type === 'MA' || type === 'TF') {
+          syncChoiceEditor();
+        } else if (type === 'SA') {
+          syncSaEditor();
+        }
+      });
+
+      {% if request.user|can_use_ai_features %}
+      // ─── Quiz AI Features ───────────────────────────────────────────
+
+      // Sync all editors before AI requests to ensure hidden fields are up-to-date
+        function syncAllEditors() {
+          var type = $('#id_question_type').val();
+          if (type === 'MC' || type === 'MA' || type === 'TF') {
+            syncChoiceEditor();
+          } else if (type === 'SA') {
+            syncSaEditor();
+          }
+        }
+
+      // Generic task polling function
+        function pollQuizAITask(taskId, $btn, $status, onSuccess) {
+          var pollInterval = setInterval(function() {
+            $.ajax({
+              url: '{{ url("task_status_ajax") }}?id=' + taskId,
+              type: 'GET',
+              success: function(data) {
+                if (data.code === 'SUCCESS') {
+                  clearInterval(pollInterval);
+                  $btn.prop('disabled', false);
+                  onSuccess(data);
+                  setTimeout(function() {
+                    $status.text('').css('color', '#666');
+                  }, 5000);
+                } else if (data.code === 'FAILURE') {
+                  clearInterval(pollInterval);
+                  $btn.prop('disabled', false);
+                  $status.text('{{ _("Error: ") }}' + (data.error || 'Task failed')).css('color', 'red');
+                }
+              },
+              error: function() {
+                clearInterval(pollInterval);
+                $btn.prop('disabled', false);
+                $status.text('{{ _("Network error occurred") }}').css('color', 'red');
+              }
+            });
+          }, 2000);
+        }
+
+      // ─── Inject Inline AI Buttons ─────────────────────────────────
+        function injectImproveMarkdownBtn() {
+          if ($('#quiz-ai-improve-markdown').length) return;
+          var html = '<div id="quiz-ai-improve-markdown" class="quiz-ai-inline">';
+          html += '<div class="quiz-ai-row">';
+          html += '<button type="button" id="improve-question-markdown-btn" class="action-btn small">';
+          html += '<i class="fa fa-magic"></i> {{ _("Auto Improve Markdown") }}';
+          html += '</button>';
+          html += '<span id="improve-markdown-status" class="quiz-ai-status"></span>';
+          html += '</div>';
+          html += '<div id="improved-question-markdown-result" class="quiz-ai-result" style="display: none;">';
+          html += '<div class="quiz-ai-result-header">';
+          html += '<label><b>{{ _("Improved Markdown:") }}</b></label>';
+          html += '<div>';
+          html += '<button type="button" id="improved-question-markdown-insert" class="action-btn small">{{ _("Insert") }}</button>';
+          html += '<button type="button" id="improved-question-markdown-copy" class="action-btn small">{{ _("Copy") }}</button>';
+          html += '</div></div>';
+          html += '<textarea id="improved-question-markdown-content" readonly class="quiz-ai-textarea"></textarea>';
+          html += '</div></div>';
+
+        // Insert after choice-editor-section or SA editor if exists, else after content field
+          var $choiceSection = $('#choice-editor-section');
+          var $saEditor = $('#sa-editor-container');
+          if ($choiceSection.length) {
+            $choiceSection.after(html);
+          } else if ($saEditor.length) {
+            $saEditor.after(html);
+          } else {
+          // No answer editor (Essay or no type) — place after content
+            var $contentField = $('#quiz-field-wrapper-content').closest('.quiz-field-row');
+            if ($contentField.length) {
+              $contentField.after(html);
+            }
+          }
+        }
+
+        function injectExplanationBtn() {
+          if ($('#quiz-ai-explanation').length) return;
+          var html = '<div id="quiz-ai-explanation" class="quiz-ai-inline">';
+          html += '<div class="quiz-ai-row">';
+          html += '<button type="button" id="generate-explanation-btn" class="action-btn small">';
+          html += '<i class="fa fa-magic"></i> {{ _("Generate Explanation") }}';
+          html += '</button>';
+          html += '<span id="explanation-status" class="quiz-ai-status"></span>';
+          html += '</div>';
+        // Rough ideas collapsible
+          html += '<div id="explanation-rough-ideas" class="quiz-ai-rough-ideas" style="display: none;">';
+          html += '<label><b>{{ _("Your rough ideas (optional):") }}</b></label>';
+          html += '<textarea id="rough-ideas-textarea" class="quiz-ai-textarea" rows="4" placeholder="{{ _("Enter rough ideas or a draft explanation to guide the AI...") }}"></textarea>';
+          html += '<button type="button" id="explanation-generate-go" class="action-btn small" style="margin-top: 0.5rem;">';
+          html += '<i class="fa fa-magic"></i> {{ _("Generate") }}';
+          html += '</button>';
+          html += '</div>';
+        // Result area
+          html += '<div id="explanation-result" class="quiz-ai-result" style="display: none;">';
+          html += '<div class="quiz-ai-result-header">';
+          html += '<label><b>{{ _("AI Explanation:") }}</b></label>';
+          html += '<div>';
+          html += '<button type="button" id="explanation-insert" class="action-btn small">{{ _("Insert") }}</button>';
+          html += '<button type="button" id="explanation-copy" class="action-btn small">{{ _("Copy") }}</button>';
+          html += '</div></div>';
+          html += '<textarea id="explanation-result-content" readonly class="quiz-ai-textarea"></textarea>';
+          html += '</div></div>';
+
+        // Insert after explanation field
+          var $explanationField = $('#id_explanation').closest('.quiz-field-row');
+          if (!$explanationField.length) {
+            $explanationField = $('#quiz-field-wrapper-explanation').closest('.quiz-field-row');
+          }
+          if ($explanationField.length) {
+            $explanationField.after(html);
+          }
+        }
+
+      // Inject buttons on load and when question type changes
+        injectImproveMarkdownBtn();
+        injectExplanationBtn();
+        $('#id_question_type').on('change', function() {
+        // Re-inject after choice editor rebuilds
+          setTimeout(function() {
+            $('#quiz-ai-improve-markdown').remove();
+            injectImproveMarkdownBtn();
+          }, 100);
+        });
+
+      // ─── Improve Question Markdown ────────────────────────────────
+        $(document).on('click', '#improve-question-markdown-btn', function() {
+          var $btn = $(this);
+          var $status = $('#improve-markdown-status');
+          var content = $('#wmd-input-id_content').val() || '';
+
+          if (!content.trim()) {
+            alert('{{ _("Please enter question content first.") }}');
+            return;
+          }
+
+        // Sync editors to get current choices
+          syncAllEditors();
+
+          $btn.prop('disabled', true);
+          $status.text('{{ _("Improving markdown...") }}');
+
+          $.ajax({
+            url: window.location.pathname,
+            type: 'POST',
+            data: {
+              'improve_question_markdown': '1',
+              'content': content,
+              'choices': $('#id_choices').val() || '',
+              'csrfmiddlewaretoken': $('[name=csrfmiddlewaretoken]').val()
+            },
+            success: function(data) {
+              if (data.success && data.task_id) {
+                $status.text('{{ _("Processing... please wait") }}').css('color', '#666');
+                pollQuizAITask(data.task_id, $btn, $status, function(result) {
+                  if (result.success && result.improved_markdown) {
+                    $('#improved-question-markdown-result').show();
+                    var previewText = result.improved_markdown;
+                  // Store improved choices for later insertion
+                    if (result.improved_choices) {
+                      $('#improved-question-markdown-content').data('improved-choices', JSON.stringify(result.improved_choices));
+                    // Append choices preview to the textarea
+                      previewText += '\n\n─── {{ _("Choices") }} ───';
+                      result.improved_choices.forEach(function(c) {
+                        var id = c.id || '?';
+                        var text = c.text || c;
+                        previewText += '\n' + id + '. ' + text;
+                      });
+                    } else {
+                      $('#improved-question-markdown-content').removeData('improved-choices');
+                    }
+                    $('#improved-question-markdown-content').val(previewText);
+                    var msg = '{{ _("Markdown improved!") }}';
+                    if (result.improved_choices) msg += ' {{ _("(choices included)") }}';
+                    $status.text(msg).css('color', 'green');
+                  } else if (result.error) {
+                    $status.text('{{ _("Error: ") }}' + result.error).css('color', 'red');
+                  } else {
+                    $status.text('{{ _("No improvements needed") }}').css('color', 'orange');
+                  }
+                });
+              } else if (data.error) {
+                $status.text('{{ _("Error: ") }}' + data.error).css('color', 'red');
+                $btn.prop('disabled', false);
+              }
+            },
+            error: function() {
+              $status.text('{{ _("Network error occurred") }}').css('color', 'red');
+              $btn.prop('disabled', false);
+            }
+          });
+        });
+
+      // Insert improved markdown into content editor
+        $(document).on('click', '#improved-question-markdown-insert', function() {
+          var content = $('#improved-question-markdown-content').val();
+          var $editor = $('#wmd-input-id_content');
+          if ($editor.length) {
+            $editor.val(content);
+            $editor.trigger('input').trigger('change');
+          }
+        // Also insert improved choices if available
+          var improvedChoicesStr = $('#improved-question-markdown-content').data('improved-choices');
+          if (improvedChoicesStr && choiceEditor) {
+            try {
+              var improvedChoices = JSON.parse(improvedChoicesStr);
+              if (Array.isArray(improvedChoices)) {
+              // Ensure each choice is an {id, text} object
+                var normalized = improvedChoices.map(function(c, i) {
+                  if (typeof c === 'object' && c.id && c.text !== undefined) return c;
+                  var origId = choiceEditor.choices[i] ? choiceEditor.choices[i].id : String.fromCharCode(65 + i);
+                  return { id: origId, text: typeof c === 'string' ? c : String(c) };
+                });
+                choiceEditor.choices = normalized;
+                choiceEditor.render();
+                choiceEditor.bindEvents();
+                syncChoiceEditor();
+              }
+            } catch(e) {}
+          }
+          $('#improve-markdown-status').text('{{ _("Inserted into editor!") }}').css('color', 'green');
+        });
+
+      // Copy improved markdown
+        $(document).on('click', '#improved-question-markdown-copy', function() {
+          var $content = $('#improved-question-markdown-content');
+          $content.select();
+          document.execCommand('copy');
+          $(this).text('{{ _("Copied!") }}');
+          var $this = $(this);
+          setTimeout(function() {
+            $this.text('{{ _("Copy") }}');
+          }, 2000);
+        });
+
+      // ─── Generate/Improve Explanation ────────────────────────────
+      // Dynamic button label based on explanation content
+        function updateExplanationBtnLabel() {
+          var explanation = $('#wmd-input-id_explanation').val() || '';
+          var $btn = $('#generate-explanation-btn');
+          if (explanation.trim()) {
+            $btn.html('<i class="fa fa-magic"></i> {{ _("Improve Explanation") }}');
+          } else {
+            $btn.html('<i class="fa fa-magic"></i> {{ _("Generate Explanation") }}');
+          }
+        }
+
+        updateExplanationBtnLabel();
+        $(document).on('input change', '#wmd-input-id_explanation', updateExplanationBtnLabel);
+
+      // Toggle rough ideas area
+        $(document).on('click', '#generate-explanation-btn', function() {
+          var $roughIdeas = $('#explanation-rough-ideas');
+          $roughIdeas.toggle();
+          if ($roughIdeas.is(':visible')) {
+            $('#rough-ideas-textarea').focus();
+          }
+        });
+
+      // Actual generation (from the "Generate" button inside rough ideas, or if no rough ideas shown)
+        function doGenerateExplanation() {
+          var $btn = $('#explanation-generate-go');
+          var $status = $('#explanation-status');
+          var content = $('#wmd-input-id_content').val() || '';
+
+          if (!content.trim()) {
+            alert('{{ _("Please enter question content first.") }}');
+            return;
+          }
+
+        // Sync editors to get current choices/answers
+          syncAllEditors();
+
+          $btn.prop('disabled', true);
+          $('#generate-explanation-btn').prop('disabled', true);
+          $status.text('{{ _("Generating explanation...") }}');
+
+          $.ajax({
+            url: window.location.pathname,
+            type: 'POST',
+            data: {
+              'generate_explanation': '1',
+              'content': content,
+              'question_type': $('#id_question_type').val(),
+              'choices': $('#id_choices').val() || '',
+              'correct_answers': $('#id_correct_answers').val() || '',
+              'explanation': $('#wmd-input-id_explanation').val() || '',
+              'rough_ideas': $('#rough-ideas-textarea').val() || '',
+              'csrfmiddlewaretoken': $('[name=csrfmiddlewaretoken]').val()
+            },
+            success: function(data) {
+              if (data.success && data.task_id) {
+                $status.text('{{ _("Processing... please wait") }}').css('color', '#666');
+                pollQuizAITask(data.task_id, $btn, $status, function(result) {
+                  $('#generate-explanation-btn').prop('disabled', false);
+                  if (result.success && result.explanation_content) {
+                    $('#explanation-result').show();
+                    $('#explanation-result-content').val(result.explanation_content);
+                    var modeText = result.mode === 'generate' ? '{{ _("Explanation generated!") }}' : '{{ _("Explanation improved!") }}';
+                    $status.text(modeText).css('color', 'green');
+                  } else if (result.error) {
+                    $status.text('{{ _("Error: ") }}' + result.error).css('color', 'red');
+                  } else {
+                    $status.text('{{ _("Could not generate explanation") }}').css('color', 'orange');
+                  }
+                });
+              } else if (data.error) {
+                $status.text('{{ _("Error: ") }}' + data.error).css('color', 'red');
+                $btn.prop('disabled', false);
+                $('#generate-explanation-btn').prop('disabled', false);
+              }
+            },
+            error: function() {
+              $status.text('{{ _("Network error occurred") }}').css('color', 'red');
+              $btn.prop('disabled', false);
+              $('#generate-explanation-btn').prop('disabled', false);
+            }
+          });
+        }
+
+        $(document).on('click', '#explanation-generate-go', doGenerateExplanation);
+
+      // Insert explanation into editor
+        $(document).on('click', '#explanation-insert', function() {
+          var content = $('#explanation-result-content').val();
+          var $editor = $('#wmd-input-id_explanation');
+          if ($editor.length) {
+            $editor.val(content);
+            $editor.trigger('input').trigger('change');
+            $('#explanation-status').text('{{ _("Inserted into editor!") }}').css('color', 'green');
+          }
+        });
+
+      // Copy explanation
+        $(document).on('click', '#explanation-copy', function() {
+          var $content = $('#explanation-result-content');
+          $content.select();
+          document.execCommand('copy');
+          $(this).text('{{ _("Copied!") }}');
+          var $this = $(this);
+          setTimeout(function() {
+            $this.text('{{ _("Copy") }}');
+          }, 2000);
+        });
+      {% endif %}
+    });
+  </script>
+{% endblock %}
+
+{% block left_sidebar %}
+  {% include "quiz/quiz-list-tabs.html" %}
+{% endblock %}
+
+{% block right_sidebar %}
+  <div class="right-sidebar">
+    <div class="sidebox">
+      <h3 class="colored-text"><i class="fa fa-question-circle"></i> {{ _('Help') }}</h3>
+      <div class="sidebox-content">
+        <div class="help-section">
+          <h4><i class="fa fa-list"></i> {{ _('Question Types') }}</h4>
+          <ul>
+            <li><strong>{{ _('Multiple Choice') }}</strong>: {{ _('Single correct answer') }}</li>
+            <li><strong>{{ _('Multiple Answer') }}</strong>: {{ _('Multiple correct answers') }}</li>
+            <li><strong>{{ _('True/False') }}</strong>: {{ _('Binary choice') }}</li>
+            <li><strong>{{ _('Short Answer') }}</strong>: {{ _('Text-based answer') }}</li>
+            <li><strong>{{ _('Essay') }}</strong>: {{ _('Long-form, manually graded') }}</li>
+          </ul>
+        </div>
+
+        <div class="help-section">
+          <h4><i class="fa fa-calculator"></i> {{ _('Grading Strategies') }}</h4>
+          <p class="help-description">{{ _('For Multiple Answer questions:') }}</p>
+          <ul>
+            <li><strong>{{ _('All or Nothing') }}</strong>: {{ _('Full points only if all correct answers selected') }}
+            </li>
+            <li><strong>{{ _('Partial Credit') }}</strong>: {{ _('Gains points for correct, loses for wrong') }}</li>
+            <li><strong>{{ _('Right Minus Wrong') }}</strong>: {{ _('Correct count minus wrong count') }}</li>
+            <li><strong>{{ _('Correct Only') }}</strong>: {{ _('Only gains points for correct selections') }}</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block middle_content %}
+  <div class="question-create-container">
+    <h2 style="margin-top: 0;"><i class="fa fa-plus"></i> {{ _('Create Question') }}</h2>
+    <hr>
+
+    <form method="post" class="question-form">
+      {% csrf_token %}
+      {% include "quiz/form.html" %}
+
+      <div class="form-actions">
+        <button type="submit" class="action-btn">
+          <i class="fa fa-save"></i> {{ _('Create Question') }}
+        </button>
+        <a href="{{ url('question_bank_list') }}" class="btn btn-default">
+          {{ _('Cancel') }}
+        </a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

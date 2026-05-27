@@ -1,0 +1,681 @@
+{% compress js %}
+  <script src="{{ static('pagedown/Markdown.Converter.js') }}"></script>
+  <script src="{{ static('pagedown-extra/pagedown/Markdown.Converter.js') }}"></script>
+  <script src="{{ static('pagedown/Markdown.Sanitizer.js') }}"></script>
+  <script src="{{ static('pagedown/Markdown.Editor.js') }}"></script>
+  <script src="{{ static('pagedown-extra/Markdown.Extra.js') }}"></script>
+  <script src="{{ static('pagedown_init.js') }}"></script>
+  <script type="text/javascript">
+    $(document).ready(function () {
+      let loading_gif = "<i class=\"fa fa-spinner fa-pulse loading\" style=\"font-size: 1.5em; margin-bottom: 1em;\"></i>";
+
+      // Configuration passed from Django
+      var commentConfig = {
+        contentTypeId: {{ comment_content_type_id }},
+        objectId: {{ comment_object_id }},
+        postUrl: '{{ url('comment_post') }}',
+        previewUrl: '{{ url('comment_preview') }}',
+        imageUploadUrl: '/pagedown/image-upload/',
+        isNewUser: {{ 'true' if is_new_user else 'false' }},
+        newUserMessage: '{{ _('You need to have solved at least one problem before your voice can be heard.') }}',
+        placeholder: '{{ _('Write a comment...') }}'
+      };
+
+      /**
+       * Wait for MarkdownEditor to be loaded (handles race condition with pagedown_init.js)
+       */
+      function waitForMarkdownEditor(callback, maxRetries) {
+        maxRetries = maxRetries || 10;
+        var attempts = 0;
+        function check() {
+          if (typeof MarkdownEditor !== 'undefined') {
+            callback();
+          } else if (attempts < maxRetries) {
+            attempts++;
+            setTimeout(check, 200);
+          } else {
+            console.error('MarkdownEditor not loaded after ' + maxRetries + ' attempts');
+          }
+        }
+        check();
+      }
+
+      /**
+       * Initialize the new comment form
+       */
+      function initNewCommentForm() {
+        var $container = $('#new-comment-container');
+        if ($container.length === 0) return;
+
+        // Check if user is new and can't comment
+        if (commentConfig.isNewUser) {
+          $container.html(`
+            <div class="alert alert-info" style="margin-top: 1em;">
+              ${commentConfig.newUserMessage}
+            </div>
+          `);
+          return;
+        }
+
+        // Create the minimal comment form container
+        var formHtml = `
+          <div id="new-comment-form" class="new-comment-minimal">
+            <div id="new-comment-editor-container" class="editor-container"></div>
+          </div>
+        `;
+
+        $container.html(formHtml);
+
+        // Create MarkdownEditor instance in minimal mode
+        var editorContainer = document.getElementById('new-comment-editor-container');
+        var newCommentEditor = new MarkdownEditor(editorContainer, {
+          id: 'new-comment-editor',
+          previewUrl: commentConfig.previewUrl,
+          imageUploadUrl: commentConfig.imageUploadUrl,
+          enableImageUpload: true,
+          mode: 'minimal',
+          placeholder: commentConfig.placeholder,
+          submitLabel: '{{ _("Post") }}',
+          cancelLabel: '{{ _("Cancel") }}',
+          expandLabel: '{{ _("Expand editor") }}',
+          collapseLabel: '{{ _("Collapse editor") }}',
+          onSubmit: function() {
+            submitNewComment();
+          }
+        });
+
+        // Store editor reference
+        $container.find('#new-comment-form').data('editor', newCommentEditor);
+
+        // Handle comment submission
+        function submitNewComment() {
+          var body = newCommentEditor.getValue();
+          if (!body.trim()) return;
+
+          // Disable submit button (works in both minimal and full modes)
+          var $submitBtn = $container.find('.minimal-submit-btn, .full-submit-btn');
+          $submitBtn.prop('disabled', true);
+
+          // Prepare form data
+          var formDataObj = {
+            csrfmiddlewaretoken: $.cookie('csrftoken'),
+            parent: '',
+            body: body,
+            content_type_id: commentConfig.contentTypeId,
+            object_id: commentConfig.objectId
+          };
+
+          // Show loading
+          var $loading = $(loading_gif);
+          $container.find('#new-comment-editor-container').append($loading);
+
+          $.ajax({
+            url: commentConfig.postUrl,
+            type: 'POST',
+            data: formDataObj,
+            success: function(response) {
+              // Reset the editor to minimal mode
+              newCommentEditor.reset();
+
+              // Prepend new comment to the list
+              $('#comment-0').prepend(response);
+              $('.no-comments-message').hide();
+
+              // Update comment count
+              var $commentCountBadge = $('.comment-count-badge');
+              if ($commentCountBadge.length) {
+                var currentCount = parseInt($commentCountBadge.text().replace(/[()]/g, ''));
+                $commentCountBadge.text('(' + (currentCount + 1) + ')');
+              } else {
+                $('#comment-header').append(' <span class="comment-count-badge">(1)</span>');
+              }
+
+              // Initialize new comment functionality
+              renderKatex($('#comments')[0]);
+              register_time($('.time-with-rel'));
+              register_comment_operations();
+
+              $submitBtn.prop('disabled', false);
+            },
+            error: function(xhr) {
+              var errorMessage = 'An error occurred while posting your comment.';
+              try {
+                var response = JSON.parse(xhr.responseText);
+                if (typeof response === 'object') {
+                  errorMessage = Object.values(response).flat().join('<br>');
+                }
+              } catch (e) {
+                if (xhr.responseText) {
+                  errorMessage = xhr.responseText;
+                }
+              }
+              alert(errorMessage);
+              $submitBtn.prop('disabled', false);
+            },
+            complete: function() {
+              $loading.remove();
+            }
+          });
+        }
+      }
+
+      // Initialize the new comment form (wait for MarkdownEditor to load)
+      waitForMarkdownEditor(initNewCommentForm);
+
+      /**
+       * Create and show a comment reply form
+       * Uses MarkdownEditor class for clean, encapsulated editor creation
+       *
+       * @param {number} parentId - ID of the comment being replied to
+       */
+      window.reply_comment = function (parentId) {
+        var $replyContainer = $('#comment-' + parentId + '-reply');
+        var formId = 'reply-form-' + parentId;
+        var editorId = 'reply-editor-' + parentId;
+
+        // Only create the form if it doesn't already exist
+        if ($replyContainer.find('#' + formId).length === 0) {
+          // Create the reply form container
+          var formHtml = `
+            <div id="${formId}" class="reply-comment-minimal">
+              <div id="${editorId}-container" class="editor-container"></div>
+            </div>
+          `;
+
+          $replyContainer.append(formHtml);
+
+          // Create MarkdownEditor instance in minimal mode
+          var editorContainer = document.getElementById(editorId + '-container');
+          var editor = new MarkdownEditor(editorContainer, {
+            id: editorId,
+            previewUrl: commentConfig.previewUrl,
+            imageUploadUrl: commentConfig.imageUploadUrl,
+            enableImageUpload: true,
+            mode: 'minimal',
+            placeholder: '{{ _("Write a reply...") }}',
+            submitLabel: '{{ _("Reply") }}',
+            cancelLabel: '{{ _("Cancel") }}',
+            expandLabel: '{{ _("Expand editor") }}',
+            collapseLabel: '{{ _("Collapse editor") }}',
+            onSubmit: function() {
+              submitReply();
+            },
+            onCancel: function() {
+              // Clean up editor and form
+              editor.destroy();
+              $('#' + formId).remove();
+            }
+          });
+
+          // Store editor reference on the form element
+          $replyContainer.find('#' + formId).data('editor', editor);
+
+          // Handle reply submission
+          function submitReply() {
+            var body = editor.getValue();
+            if (!body.trim()) return;
+
+            // Disable submit button
+            var $submitBtn = $replyContainer.find('.minimal-submit-btn');
+            $submitBtn.prop('disabled', true);
+
+            // Prepare form data
+            var formDataObj = {
+              csrfmiddlewaretoken: $.cookie('csrftoken'),
+              parent: parentId,
+              body: body,
+              content_type_id: commentConfig.contentTypeId,
+              object_id: commentConfig.objectId
+            };
+
+            // Show loading
+            var $loading = $(loading_gif);
+            $replyContainer.find('.reply-comment-minimal').append($loading);
+
+            $.ajax({
+              url: commentConfig.postUrl,
+              type: 'POST',
+              data: formDataObj,
+              success: function(response) {
+                // Clean up editor and form
+                editor.destroy();
+                $('#' + formId).remove();
+
+                // Reload replies
+                comment_get_replies(parentId);
+              },
+              error: function(xhr) {
+                var errorMessage = 'An error occurred while posting your comment.';
+                try {
+                  var response = JSON.parse(xhr.responseText);
+                  if (typeof response === 'object') {
+                    errorMessage = Object.values(response).flat().join('<br>');
+                  }
+                } catch (e) {
+                  if (xhr.responseText) {
+                    errorMessage = xhr.responseText;
+                  }
+                }
+                alert(errorMessage);
+                $submitBtn.prop('disabled', false);
+              },
+              complete: function() {
+                $loading.remove();
+              }
+            });
+          }
+        }
+
+        // Show the reply container (remove hidden attr as fadeIn may not handle it)
+        $replyContainer.removeAttr('hidden').fadeIn();
+        var editor = $replyContainer.find('#' + formId).data('editor');
+        if (editor) {
+          editor.focus();
+        }
+      };
+
+      // Close button handler for old-style reply forms
+      $(document).on('click', '.close', function() {
+        $(this).closest('.reply-comment, .reply-comment-minimal').fadeOut();
+      });
+
+      // Allow Escape key to close the reply form
+      $(document).on('keydown', '.reply-comment-minimal textarea', function(e) {
+        if (e.key === 'Escape') {
+          $(this).closest('.reply-comment-minimal').fadeOut();
+        }
+      });
+
+      function update_math($comment) {
+        var $body = $comment.find('.comment-body');
+        renderKatex($body[0]);
+      }
+
+      window.show_revision = function (comment_id, offset) {
+        var $comment = $("#comment-" + comment_id);
+
+        // If .comment-body is hidden, then this is a bad comment that the user has not clicked
+        // Thus the revision retrieval should do nothing
+        if (!$comment.find('.comment-body').is(':visible'))
+          return;
+
+        var cur_revision = parseInt($comment.attr("data-revision"));
+        var max_revision = parseInt($comment.attr("data-max-revision"));
+        var revision_ajax = $comment.attr("data-revision-ajax");
+        var show_revision = cur_revision + offset;
+
+        $comment.attr("data-revision", show_revision);
+
+        $.get(revision_ajax, {
+          revision: show_revision
+        }).done(function (body) {
+          $comment.find('.previous-revision').css({visibility: show_revision == 0 ? 'hidden' : ''});
+          $comment.find('.next-revision').css({visibility: show_revision == max_revision ? 'hidden' : ''});
+          $comment.find('.comment-body').html(body);
+
+          var edit_text = '{{ _('edit {edits}') }}'.replace("{edits}", show_revision);
+
+          if (show_revision == 0) {
+            edit_text = '{{ _('original') }}';
+          } else if (show_revision == max_revision && max_revision == 1) {
+            edit_text = '{{ _('edited') }}';
+          }
+
+          $comment.find('.comment-edit-text').text(' ' + edit_text + ' ');
+          update_math($comment);
+        });
+      };
+
+      /**
+       * Send a vote request to the server
+       * 
+       * @param {string} url - Vote endpoint URL
+       * @param {number} commentId - ID of the comment being voted on
+       * @param {number} voteValue - +1 for upvote, -1 for downvote
+       * @param {Function} onSuccess - Callback function after successful vote
+       */
+      function ajax_vote(url, commentId, voteValue, onSuccess) {
+        return $.ajax({
+          url: url,
+          type: 'POST',
+          data: {
+            id: commentId
+          },
+          success: function (data, textStatus, jqXHR) {
+            // Update the comment score display
+            var $scoreElement = $('#comment-' + commentId + ' .comment-score').first();
+            var newScore = parseInt($scoreElement.text()) + voteValue;
+            $scoreElement.text(newScore);
+
+            // Execute success callback if provided
+            if (typeof onSuccess === 'function') {
+              onSuccess();
+            }
+          },
+          error: function (data, textStatus, jqXHR) {
+            alert('Could not vote: ' + data.responseText);
+          }
+        });
+      }
+      const queryString = window.location.search;
+      const urlParams = new URLSearchParams(queryString);
+      const target_comment = urlParams.get('comment-id');
+
+      window.comment_get_replies = function (commentId) {
+        var $showRepliesButton = $("#comment-" + commentId  + " .show_more_reply");
+        $showRepliesButton.hide();
+
+        var $childrenContainer = $("#comment-" + commentId + "-children");
+        $childrenContainer.append(loading_gif);
+
+        var combinedSort = $('#comment-sort-combined').val() || 'time_desc';
+        var sortParts = combinedSort.split('_');
+
+        $.ajax({
+          url: '{{ url('comment_get_replies') }}',
+          type: 'GET',
+          data: {
+            id: commentId,
+            sort_by: sortParts[0],
+            sort_order: sortParts[1]
+          },
+          success: function(data) {
+            $("#comment-" + commentId + "-children .loading").hide();
+            $childrenContainer.html(data);
+            renderKatex($('#comments')[0]);
+            register_time($('.time-with-rel'));
+            register_comment_operations();
+          }
+        })
+      }
+
+      window.hide_comment = function (commentId) {
+        // Ask for confirmation before hiding a comment
+        if (!(confirm('Are you sure you want to hide this comment?')))
+          return;
+
+        // Send request to hide the comment
+        $.post('{{ url('comment_hide') }}', {id: commentId})
+          .then(function () {
+            // Remove the comment and its children from the DOM
+            $('#comment-' + commentId).remove();
+            $('#comment-' + commentId + '-children').remove();
+          })
+          .catch(function () {
+            alert('Failed to hide comment.');
+          });
+      };
+
+      // Store inline edit editors by comment ID
+      var inlineEditEditors = {};
+
+      /**
+       * Inline edit a comment
+       * Replaces the comment body with an editor in place
+       */
+      window.edit_comment = function(commentId) {
+        var $comment = $('#comment-' + commentId);
+        var $body = $comment.find('.body').first();
+        var $commentBody = $body.find('.comment-body').first();
+        var $editLink = $comment.find('.edit-link').first();
+
+        // Don't allow editing if already editing
+        if ($body.find('.inline-edit-container').length > 0) {
+          return;
+        }
+
+        // Get the raw markdown from data attribute
+        var rawBody = $editLink.data('body') || '';
+        var editUrl = $editLink.data('edit-url');
+
+        // Store original HTML for cancel
+        var originalHtml = $body.html();
+
+        // Hide original content and create editor container
+        $commentBody.hide();
+        $body.find('.bad-comment-body').hide();
+
+        var editorContainerId = 'inline-edit-' + commentId;
+        var $editorContainer = $('<div id="' + editorContainerId + '" class="inline-edit-container"></div>');
+        $body.append($editorContainer);
+
+        // Create MarkdownEditor in minimal mode with expand/collapse
+        var editor = new MarkdownEditor($editorContainer[0], {
+          id: 'inline-edit-editor-' + commentId,
+          previewUrl: commentConfig.previewUrl,
+          imageUploadUrl: commentConfig.imageUploadUrl,
+          enableImageUpload: true,
+          mode: 'minimal',
+          placeholder: '{{ _("Edit your comment...") }}',
+          initialValue: rawBody,
+          submitLabel: '{{ _("Save") }}',
+          cancelLabel: '{{ _("Cancel") }}',
+          expandLabel: '{{ _("Expand editor") }}',
+          collapseLabel: '{{ _("Collapse editor") }}',
+          onSubmit: function() {
+            submitEdit();
+          },
+          onCancel: function() {
+            cancelEdit();
+          }
+        });
+
+        // Store editor reference
+        inlineEditEditors[commentId] = editor;
+
+        // Add focus state classes to show buttons immediately
+        var $wrapper = $editorContainer.find('.wmd-wrapper-minimal');
+        $wrapper.addClass('has-focus has-content');
+
+        // Focus the editor
+        editor.focus();
+
+        // Submit edit handler
+        function submitEdit() {
+          var body = editor.getValue();
+          if (!body.trim()) return;
+
+          // Disable submit button
+          var $submitBtn = $editorContainer.find('.full-submit-btn');
+          $submitBtn.prop('disabled', true).text('{{ _("Saving...") }}');
+
+          $.ajax({
+            url: editUrl,
+            type: 'POST',
+            data: {
+              csrfmiddlewaretoken: $.cookie('csrftoken'),
+              body: body
+            },
+            success: function() {
+              // Fetch updated comment content
+              $.ajax({
+                url: '{{ url("comment_content", 0) }}'.replace('0', commentId),
+                success: function(data) {
+                  // Clean up editor
+                  editor.destroy();
+                  delete inlineEditEditors[commentId];
+
+                  // Update comment HTML
+                  $comment.html(data);
+                  update_math($comment);
+
+                  // Update the edit link's data-body attribute with new content
+                  var $newEditLink = $comment.find('.edit-link').first();
+                  $newEditLink.data('body', body);
+
+                  // Re-register comment operations
+                  register_comment_operations();
+                },
+                error: function() {
+                  console.log('Failed to fetch updated comment');
+                  $submitBtn.prop('disabled', false).text('{{ _("Save") }}');
+                }
+              });
+            },
+            error: function(xhr) {
+              var errorMessage = '{{ _("An error occurred while saving your comment.") }}';
+              try {
+                var response = JSON.parse(xhr.responseText);
+                if (typeof response === 'object') {
+                  errorMessage = Object.values(response).flat().join('<br>');
+                }
+              } catch (e) {
+                if (xhr.responseText) {
+                  errorMessage = xhr.responseText;
+                }
+              }
+              alert(errorMessage);
+              $submitBtn.prop('disabled', false).text('{{ _("Save") }}');
+            }
+          });
+        }
+
+        // Cancel edit handler
+        function cancelEdit() {
+          // Clean up editor
+          editor.destroy();
+          delete inlineEditEditors[commentId];
+
+          // Restore original content
+          $body.html(originalHtml);
+        }
+      };
+
+      window.register_comment_operations = function() {
+        var $comments = $('#comments');
+
+        var $root = $('html, body');
+        $comments.find('a.comment-link').click(function () {
+          var href = $.attr(this, 'href');
+          $root.animate({
+            scrollTop: $(href).offset().top
+          }, 500, function () {
+            window.location.hash = href;
+          });
+          return false;
+        });
+      };
+
+      register_comment_operations();
+
+      window.comment_show_more = function (sourceId, currentOffset, highlightedCommentId) {
+        var $showMoreButton, $commentsContainer, url, requestData;
+        var combinedSort = $('#comment-sort-combined').val() || 'time_desc';
+        var sortParts = combinedSort.split('_');
+
+        if (sourceId == 0) {
+          $showMoreButton = $("#comment-0 .show_more_comment");
+          $commentsContainer = $("#comment-0");
+
+          url = '{{ url('get_comments') }}';
+          requestData = {
+            content_type_id: {{ comment_content_type_id }},
+            object_id: {{ comment_object_id }},
+            offset: currentOffset,
+            target_comment: highlightedCommentId,
+            sort_by: sortParts[0],
+            sort_order: sortParts[1]
+          };
+        } else {
+          $showMoreButton = $("#comment-" + sourceId + "-children .show_more_comment");
+          $commentsContainer = $("#comment-" + sourceId + "-children");
+
+          url = '{{ url('comment_get_replies') }}';
+          requestData = {
+            id: sourceId,
+            offset: currentOffset,
+            sort_by: sortParts[0],
+            sort_order: sortParts[1]
+          };
+        }
+
+        $showMoreButton.hide();
+        $commentsContainer.append(loading_gif);
+
+        $.ajax({
+          url: url,
+          type: 'GET',
+          data: requestData,
+          success: function(data) {
+            $commentsContainer.find(".loading").hide();
+            $commentsContainer.append(data);
+            renderKatex($('#comments')[0]);
+            register_time($('.time-with-rel'));
+            register_comment_operations();
+          }
+        })
+      }
+
+      /**
+       * Get vote buttons for a comment
+       */
+      var getVoteElements = function (commentId) {
+        var $comment = $('#comment-' + commentId);
+        return {
+          upvote: $comment.find('.upvote-link').first(),
+          downvote: $comment.find('.downvote-link').first()
+        };
+      };
+
+      /**
+       * Upvote a comment
+       */
+      window.comment_upvote = function (commentId) {
+        ajax_vote('{{ url('comment_upvote') }}', commentId, 1, function () {
+          var $voteButtons = getVoteElements(commentId);
+          // If comment was previously downvoted, remove downvote class
+          if ($voteButtons.downvote.hasClass('voted'))
+            $voteButtons.downvote.removeClass('voted');
+          else
+            // Otherwise, mark as upvoted
+          $voteButtons.upvote.addClass('voted');
+        });
+      };
+
+      /**
+       * Downvote a comment
+       */
+      window.comment_downvote = function (commentId) {
+        ajax_vote('{{ url('comment_downvote') }}', commentId, -1, function () {
+          var $voteButtons = getVoteElements(commentId);
+          // If comment was previously upvoted, remove upvote class
+          if ($voteButtons.upvote.hasClass('voted'))
+            $voteButtons.upvote.removeClass('voted');
+          else
+            // Otherwise, mark as downvoted
+          $voteButtons.downvote.addClass('voted');
+        });
+      };
+
+      $('img.unveil').unveil(200);
+
+      /**
+       * Show a hidden comment (that was hidden due to negative score)
+       */
+      window.comment_show_content = function (commentId) {
+        var $comment = $('#comment-' + commentId);
+        $comment.find('.comment-body').show();
+        $comment.find('.bad-comment-body').hide();
+      };
+
+
+      window.comment_share = function (element, commentId) {
+        var url = window.location.origin + window.location.pathname + '?target_comment=' + commentId + '#comment-' + commentId;
+        navigator.clipboard.writeText(url).then(function() {
+          showTooltip(element, "{{ _('Copied link') }}", 'n');
+        });
+      };
+
+      $(window).on('hashchange', function () {
+        var hash = window.location.hash;
+        if (hash.startsWith('#')) {
+          var $comment = $(hash).addClass('highlight');
+          if ($comment) {
+            $(document).scrollTop($comment.position().top - 50);
+          }
+        }
+      }).trigger('hashchange');
+
+    });
+  </script>
+{% endcompress %}

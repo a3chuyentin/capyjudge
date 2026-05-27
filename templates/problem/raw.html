@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html class="problem-raw">
+  <head>
+    <link rel="stylesheet" href="{{ static('style.css') }}">
+    <link rel="stylesheet" href="{{ static('pygment-github.css') }}" type="text/css">
+    <link rel="stylesheet" href="{{ static('markdown.css') }}">
+    <link rel="stylesheet" href="{{ static('fontawesome/css/all.min.css') }}">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="pygment-github.css" type="text/css">
+    <link rel="stylesheet" href="markdown.css">
+
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <style>
+      html {
+        background: white;
+      }
+
+      body {
+        page-break-after: always;
+        background: white;
+      }
+
+      tr {
+        page-break-inside: avoid;
+      }
+
+      #info-table {
+        width: auto;
+        background: white;
+      }
+
+      #info-table td {
+        text-align: left;
+      }
+
+      #info-table td.value {
+        min-width: 10em;
+      }
+
+      #info-table td.key {
+        font-weight: bold;
+      }
+
+      .lang-limit {
+        margin-left: 1.5em;
+      }
+
+      .lang-name:after {
+        content: ": ";
+      }
+
+      .problem-info-entry {
+        vertical-align: top;
+        float: center;
+        padding: 0.6em;
+        display: inline-block;
+        text-align: left;
+      }
+
+    </style>
+  </head>
+
+  <body>
+    <h2 style="display: inline-block;">{{ problem_name }}</h2>
+
+    <div class="new-problem-info">
+      <span class="info-block">
+        <i class="fa fa-check"></i><span class="pi-name"> {{ _('Points:') }}</span>
+        <span class="new-pi-value">
+          {% if contest_problem %}
+            {{ contest_problem.points }} {% if contest_problem.partial %}(p){% endif %}
+          {% else %}
+            {{ problem.points|floatformat }} {% if problem.partial %}(p){% endif %}
+          {% endif %}
+        </span>
+      </span>
+
+      <span class="info-block">
+        <i class="fa fa-clock"></i><span class="pi-name"> {{ _('Time limit:') }}</span>
+        <span class="new-pi-value">{{ problem.time_limit }}s</span>
+      </span>
+
+      <span class="info-block">
+        <i class="fa fa-server"></i><span class="pi-name"> {{ _('Memory limit:') }}</span>
+        <span class="new-pi-value">{{ problem.memory_limit|kbsimpleformat }}</span>
+      </span>
+
+      <span class="info-block">
+        <i class="fa fa-file"></i><span class="pi-name"> {{ _('Input:') }}</span>
+        <span class="new-pi-value">
+          {{ fileio_input or _('stdin') }}
+        </span>
+      </span>
+
+      <span class="info-block">
+        <i class="fa fa-file"></i><span class="pi-name"> {{ _('Output:') }}</span>
+        <span class="new-pi-value">{{ fileio_output or _('stdout') }}</span>
+      </span>
+    </div>
+    <div class="content-description printing">
+      {{ description|markdown|reference|absolutify(url)|str|safe }}
+    </div>
+    <script src="{{ static('katex_config.js') }}"></script>
+    {% include "katex-load.html" %}
+    <script>
+      // Auto-open all spoilers/details elements
+      document.addEventListener('DOMContentLoaded', function() {
+        const details = document.querySelectorAll('details');
+        details.forEach(function(detail) {
+          detail.open = true;
+        });
+      });
+    </script>
+  </body>
+</html>

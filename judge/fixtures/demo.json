@@ -1,0 +1,106 @@
+[
+    {
+        "fields": {
+            "about": "",
+            "ace_theme": "github",
+            "current_contest": null,
+            "display_rank": "admin",
+            "ip": "10.0.2.2",
+            "language": 1,
+            "last_access": "2017-12-02T08:57:10.093Z",
+            "mute": false,
+            "organizations": [
+                1
+            ],
+            "performance_points": 0.0,
+            "points": 0.0,
+            "problem_count": 0,
+            "rating": null,
+            "timezone": "Asia/Ho_Chi_Minh",
+            "user": 1
+        },
+        "model": "judge.profile",
+        "pk": 1
+    },
+    {
+        "fields": {
+            "date_joined": "2017-12-02T08:34:17.408Z",
+            "email": "",
+            "first_name": "",
+            "groups": [
+
+            ],
+            "is_active": true,
+            "is_staff": true,
+            "is_superuser": true,
+            "last_login": "2017-12-02T08:34:31.840Z",
+            "last_name": "",
+            "password": "pbkdf2_sha256$36000$eFRRZq4DgktS$md1gk0bBJb7PH/+3YEXkcCW8K+KmiI+y/amqR32G2DY=",
+            "user_permissions": [
+
+            ],
+            "username": "admin"
+        },
+        "model": "auth.user",
+        "pk": 1
+    },
+    {
+        "fields": {
+            "about": "This is a sample organization. You can use organizations to split up your user base, host private contests, and more.",
+            "access_code": null,
+            "admins": [
+                1
+            ],
+            "creation_date": "2017-12-02T08:50:25.199Z",
+            "is_open": true,
+            "slug": "dmoj",
+            "name": "DMOJ: Modern Online Judge",
+            "registrant": 1,
+            "short_name": "DMOJ",
+            "slots": null
+        },
+        "model": "judge.organization",
+        "pk": 1
+    },
+    {
+        "fields": {
+            "full_name": "Simple Math",
+            "name": "Simple Math"
+        },
+        "model": "judge.problemtype",
+        "pk": 1
+    },
+    {
+        "fields": {
+            "full_name": "Uncategorized",
+            "name": "Uncategorized"
+        },
+        "model": "judge.problemgroup",
+        "pk": 1
+    },
+    {
+        "fields": {
+            "authors": [
+                1
+            ],
+            "content": "Welcome to DMOJ!\n\n```python\nprint \"Hello, World!\"\n```\n\nYou can get started by checking out [this problem we've added for you](/problem/aplusb).",
+            "og_image": "",
+            "publish_on": "2017-12-02T05:00:00Z",
+            "slug": "first-post",
+            "sticky": true,
+            "summary": "",
+            "title": "First Post",
+            "visible": true
+        },
+        "model": "judge.blogpost",
+        "pk": 1
+    },
+    {
+        "fields": {
+            "domain": "localhost:8000",
+            "name": "CapyJudge"
+        },
+        "model": "sites.site",
+        "pk": 1
+    }
+]

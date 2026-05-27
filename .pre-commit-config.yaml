@@ -1,0 +1,22 @@
+repos:
+  - repo: https://github.com/rtts/djhtml
+    rev: 3.0.10  # replace with the latest tag on GitHub
+    hooks:
+      - id: djhtml
+        entry: djhtml -t 2
+        files: templates/.
+      - id: djcss
+        types: [scss]
+  - repo: https://github.com/psf/black
+    rev: 26.3.1
+    hooks:
+      - id: black
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+  - repo: https://github.com/hadialqattan/pycln
+    rev: 'v2.6.0'
+    hooks:
+      - id: pycln

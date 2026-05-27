@@ -1,0 +1,383 @@
+{% extends "base.html" %}
+{% block media %}
+  <style>
+    #ticket-list .fa-check-circle {
+      color: #00a900;
+    }
+
+    #ticket-list .fa-exclamation-circle {
+      color: darkred;
+    }
+
+    @media (min-width: 500px) {
+      #container {
+        display: flex;
+        flex-direction: row-reverse;
+      }
+
+      #container > main {
+        flex: 1;
+      }
+
+      #container > aside {
+        flex: 1;
+        max-width: 200px;
+        margin-left: 1em;
+      }
+
+      #container > aside > div {
+        position: sticky;
+        top: 60px;
+      }
+    }
+
+    .select2-selection__arrow {
+      display: none;
+    }
+
+    .select2-selection__rendered {
+      cursor: text;
+    }
+
+    .select2-results__option {
+      position: relative;
+    }
+
+    .select2-results__option--highlighted {
+      background-color: #DEDEDE !important;
+    }
+
+    li.select2-results__option--highlighted a.user-redirect {
+      display: inline-block;
+    }
+
+    a.user-redirect {
+      color: #2980b9;
+      vertical-align: middle;
+      font-size: 1.2em;
+      position: absolute;
+      right: 0.8em;
+      display: none;
+    }
+
+    a.user-redirect:hover {
+      text-shadow: 0 0 2px blue;
+    }
+
+
+    #bulk-action-bar {
+      display: none;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    #bulk-action-bar.active {
+      display: flex;
+    }
+
+    #bulk-action-bar .selected-count {
+      font-weight: bold;
+      white-space: nowrap;
+    }
+
+    #bulk-action-bar .select2-container {
+      min-width: 300px;
+    }
+  </style>
+{% endblock %}
+
+{% block js_media %}
+  <script type="text/javascript">
+    window.filter_user_ids = {{filter_status.user_id}};
+    window.filter_own_id = {{filter_status.own_id}};
+    window.filter_assignee_ids = {{filter_status.assignee_id}};
+  </script>
+  {% include "event-load.html" %}
+  <script type="text/javascript">
+    $(function () {
+      $('input#own').click(function () {
+        ($('<form>').attr('action', window.location.pathname + '?' + $('form#filter-form').serialize())
+            .append($('<input>').attr('type', 'hidden').attr('name', 'csrfmiddlewaretoken')
+                .attr('value', $.cookie('csrftoken')))
+            .attr('method', 'POST').appendTo($('body')).submit());
+      });
+
+      register_notify('ticket', {
+        $checkbox: $('#desktop-notification'),
+        change: function (enabled) {
+          if (!enabled)
+            for (key in localStorage)
+              if (key.startsWith('ticket:open:'))
+                delete localStorage[key];
+        }
+      });
+
+      function main_list_notify(id) {
+        key = 'ticket:open:' + id;
+        return !(key in localStorage) || localStorage[key] == '0';
+      }
+
+      var $tbody = $('#ticket-list').find('tbody');
+
+      function new_ticket(ticket) {
+        console.log('Fetching data for: ' + ticket.id);
+        $.ajax({
+          url: '{{ url('ticket_ajax') }}',
+          data: {id: ticket.id},
+          success: function (data) {
+            console.log('Got data for: ' + ticket.id);
+            console.log(data);
+            $tbody.prepend($(data.row));
+            notify('ticket', data.notification.title, {
+              body: data.notification.body
+            });
+          },
+          error: function (data) {
+            if (data.status === 403)
+              console.log('No right to see: ' + ticket.id);
+            else {
+              console.log('Could not load ticket:');
+              console.log(data.responseText);
+            }
+          }
+        });
+      }
+
+      function ticket_status(ticket) {
+        if (!main_list_notify(ticket.id)) return;
+
+        var $row = $('#ticket-' + ticket.id);
+        console.log('Ticket status change: ' + ticket.id);
+        if ($row.length) {
+          var $status = $row.find('td').first().find('i');
+          if (ticket.open) {
+            $status.removeClass('fa-check-circle').addClass('fa-exclamation-circle');
+            notify('ticket', '{{ _('Reopened: ') }}' + ticket.title);
+          } else {
+            $status.removeClass('fa-exclamation-circle').addClass('fa-check-circle');
+            notify('ticket', '{{ _('Closed: ') }}' + ticket.title);
+          }
+        }
+      }
+
+      window.load_dynamic_update = function (last_msg) {
+        var $assignees = $(filter_assignee_ids);
+
+        return new EventReceiver(
+          "{{ EVENT_DAEMON_LOCATION }}",
+          ['tickets'], last_msg, function (message) {
+            console.log(message);
+            if (filter_own_id != null && message.user != filter_own_id &&
+              !~message.assignees.indexOf(filter_own_id))
+              return;
+            if (filter_user_ids.length && !~filter_user_ids.indexOf(message.user))
+              return;
+            if ($assignees.length && !$assignees.filter(message.assignees).length)
+              return;
+            switch (message.type) {
+              case 'new-ticket':
+                new_ticket(message);
+                break;
+              case 'ticket-status':
+                ticket_status(message);
+                break;
+            }
+          }
+        );
+      };
+
+      var user_select2 = {
+        escapeMarkup: function (markup) {
+          return markup;
+        },
+        templateResult: function (data, container) {
+          return $('<span>')
+            .append($('<img>', {
+              'class': 'user-search-image', src: data.gravatar_url,
+              width: 24, height: 24
+            }))
+            .append($('<span>', {'class': data.display_rank + ' user-search-name'}).text(data.text));
+        },
+        ajax: {
+          data: function (params) {
+            return {
+              term: params.term || '',
+              page: params.page || 1
+            }
+          },
+          processResults: function (data) {
+            return {
+              results: data.results,
+              pagination: {
+                more: data.more
+              }
+            };
+          },
+          delay: 250,
+          cache: true,
+        },
+      };
+
+      $('#filter-user').select2($.extend(true, {}, user_select2,
+        {ajax: {url: '{{ url('ticket_user_select2_ajax') }}'}}));
+      $('#filter-assignee').select2($.extend(true, {}, user_select2,
+        {ajax: {url: '{{ url('ticket_assignee_select2_ajax') }}'}}));
+
+      {% if can_edit_all %}
+        // Bulk assign
+        var $bar = $('#bulk-action-bar');
+        var $count = $bar.find('.selected-count');
+
+        function updateBulkBar() {
+          var n = $('.ticket-select:checked').length;
+          if (n > 0) {
+            $bar.addClass('active');
+            $count.text(n + ' {{ _('selected') }}');
+          } else {
+            $bar.removeClass('active');
+          }
+        }
+
+        $tbody.on('change', '.ticket-select', updateBulkBar);
+
+        $('#select-all').change(function () {
+          $('.ticket-select').prop('checked', $(this).is(':checked'));
+          updateBulkBar();
+        });
+
+        $('#bulk-assignee-select').select2($.extend(true, {}, user_select2, {
+          ajax: {url: '{{ url('ticket_assignee_select2_ajax') }}'},
+          placeholder: '{{ _('Search users...') }}',
+          allowClear: true
+        }));
+
+        $('#bulk-assign-btn').click(function () {
+          var ticketIds = $('.ticket-select:checked').map(function () {
+            return $(this).data('ticket-id');
+          }).get();
+          var assignees = $('#bulk-assignee-select').val() || [];
+
+          if (!ticketIds.length) return;
+
+          $.ajax({
+            url: '{{ url('ticket_bulk_assign') }}',
+            method: 'POST',
+            data: {
+              'ticket_ids[]': ticketIds,
+              'assignees[]': assignees,
+              'action': $('#bulk-action-type').val(),
+              csrfmiddlewaretoken: $.cookie('csrftoken')
+            },
+            success: function (data) {
+              window.location.reload();
+            },
+            error: function (xhr) {
+              var msg = '{{ _('Error updating assignees.') }}';
+              try { msg = JSON.parse(xhr.responseText).error; } catch(e) {}
+              alert(msg);
+            }
+          });
+        });
+      {% endif %}
+    });
+  </script>
+
+  {% if last_msg %}
+    <script type="text/javascript">
+      $(function () {
+        load_dynamic_update({{last_msg}});
+      });
+    </script>
+  {% endif %}
+{% endblock %}
+
+{% block body %}
+  <div id="container">
+    <aside>
+      <div>
+        <div id="notification-box">
+          <input id="desktop-notification" type="checkbox">
+          <label for="desktop-notification">{{ _('Use desktop notification') }}</label>
+        </div>
+
+        <form id="filter-form" name="form" action="" method="get">
+          <div id="status-box" class="filter-select2" style="padding-bottom: 1em;">
+            <label>{{ _('Status') }}</label>
+            <select id="filter-status" style="width: 100%" name="status">
+              <option value="open"{% if filter_status.status == 'open' %} selected{% endif %}>{{ _('Open') }}</option>
+              <option value="closed"{% if filter_status.status == 'closed' %} selected{% endif %}>{{ _('Closed') }}</option>
+              <option value="all"{% if filter_status.status == 'all' %} selected{% endif %}>{{ _('All') }}</option>
+            </select>
+          </div>
+
+          <div id="own-box" class="filter-check" style="padding-bottom: 1em;">
+            <input id="own" type="checkbox" name="own"{% if filter_status.own %} checked{% endif %} value="1">
+            <label for="own">{{ _('Show my tickets only') }}</label>
+          </div>
+
+          <div id="user-box" class="filter-select2" style="padding-bottom: 1em;">
+            <label for="filter-user">{{ _('Filing user') }}</label>
+            <select id="filter-user" style="width: 100%" multiple name="user">
+              {% for username in filter_status.user %}
+                <option value="{{ username }}" selected>{{ username }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div id="assignee-box" class="filter-select2" style="padding-bottom: 1em;">
+            <label for="filter-assignee">{{ _('Assignee') }}</label>
+            <select id="filter-assignee" style="width: 100%" multiple name="assignee">
+              {% for username in filter_status.assignee %}
+                <option value="{{ username }}" selected>{{ username }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <button type="submit" style="margin-left: auto" class="action-btn">{{ _('Go') }}</button>
+        </form>
+      </div>
+    </aside>
+
+    <main>
+      {% if page_obj.num_pages > 1 %}
+        <div style="margin-bottom:6px; margin-top:3px">{% include "list-pages.html" %}</div>
+      {% endif %}
+      {% if can_edit_all %}
+        <div id="bulk-action-bar">
+          <span class="selected-count"></span>
+          <select id="bulk-action-type">
+            <option value="add">{{ _('Add') }}</option>
+            <option value="remove">{{ _('Remove') }}</option>
+          </select>
+          <select id="bulk-assignee-select" multiple></select>
+          <button id="bulk-assign-btn" class="action-btn">{{ _('Apply') }}</button>
+        </div>
+      {% endif %}
+      <table id="ticket-list" class="table h-scrollable-table">
+        <thead>
+          <tr>
+            {% if can_edit_all %}
+              <th><input type="checkbox" id="select-all"></th>
+            {% endif %}
+            <th></th>
+            <th>{{ _('ID') }}</th>
+            <th>{{ _('Title') }}</th>
+            <th>{{ _('User') }}</th>
+            <th>{{ _('Assignees') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ticket in tickets %}
+            {% include "ticket/row.html" %}
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if page_obj.num_pages > 1 %}
+        <div style="margin-top:10px">{% include "list-pages.html" %}</div>
+      {% endif %}
+    </main>
+  </div>
+{% endblock %}

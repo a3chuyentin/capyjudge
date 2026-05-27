@@ -1,0 +1,76 @@
+<script>
+  $(function () {
+    $('#search-handle').replaceWith($('<select>').attr({
+      id: 'search-handle',
+      name: 'handle'
+    }));
+    var in_user_redirect = false;
+    $('#search-handle').select2({
+      placeholder: '{{ _('Search by handle...') }}',
+      ajax: {
+        url: '{{ url('user_search_select2_ajax') }}',
+        delay: 250,
+        cache: true,
+      },
+      minimumInputLength: 1,
+      escapeMarkup: function (markup) {
+        return markup;
+      },
+      templateResult: function (data, container) {
+        return $('<span>')
+          .append($('<img>', {
+            'class': 'user-search-image', src: data.gravatar_url,
+            width: 24, height: 24
+          }))
+          .append($('<span>', {'class': data.display_rank + ' user-search-name'}).text(data.text))
+          .append($('<a>', {href: '/user/' + data.text, 'class': 'user-redirect'})
+              .append($('<i>', {'class': 'fa fa-mail-forward'}))
+              .mouseover(function () {
+                in_user_redirect = true;
+              }).mouseout(function () {
+                in_user_redirect = false;
+              }));
+      },
+      templateSelection: function (data) {
+        return data.text || data.id;
+      }
+    }).on('select2:selecting', function () {
+      return !in_user_redirect;
+    }).on('select2:select', function (e) {
+      var selectedData = e.params.data;
+      var username = selectedData.text;
+
+      var $form = $(this).closest('form');
+      var $hiddenHandle = $form.find('input[name="handle"]');
+
+      if ($hiddenHandle.length === 0) {
+        $hiddenHandle = $('<input type="hidden" name="handle">');
+        $form.append($hiddenHandle);
+      }
+
+      $hiddenHandle.val(username);
+
+      $form.submit();
+    });
+
+    // Highlight user from ?user= param
+    var userParam = new URLSearchParams(window.location.search).get('user');
+    if (userParam) {
+      var $user = $('#user-' + userParam);
+      if ($user.length) {
+        $user.addClass('highlight');
+        $user[0].scrollIntoView({behavior: 'smooth', block: 'center'});
+      }
+    }
+
+    $('.about-td').on('click', function() {
+      var max_height = $(this).css('max-height');
+      if (max_height !== 'fit-content') {
+        $(this).css('max-height', 'fit-content');
+      }
+      else {
+        $(this).css('max-height', '45px');
+      }
+    })
+  });
+</script>

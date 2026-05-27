@@ -1,0 +1,188 @@
+{% extends "user/user-base.html" %}
+
+{% block user_media %}
+  {% include "timezone/media-css.html" %}
+  {{ form.media.css }}
+  <style>
+    .sortedm2m-container, .sortedm2m-container p.selector-filter {
+      width: 300px;
+    }
+
+    .sortedm2m-container p.selector-filter input {
+      width: 262px;
+    }
+
+    ul.sortedm2m {
+      width: 284px;
+      min-height: 70px;
+      max-height: 200px;
+      height: 70px
+    }
+
+    .inline-header {
+      float: left;
+      font-size: 1.1em;
+      padding: 4px 8px;
+      padding-left: 0;
+    }
+
+    .block-header {
+      font-size: 1.1em;
+    }
+
+    .fullwidth {
+      display: block;
+      overflow: hidden;
+    }
+
+    #edit-form {
+      border: unset;
+      background: unset;
+      max-width: 700px;
+    }
+
+    #center-float {
+      position: relative;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+    }
+
+    .main-info tr td {
+      padding-bottom: 1em;
+    }
+  </style>
+{% endblock %}
+
+{% block js_media %}
+  {% include "timezone/media-js.html" %}
+  {{ form.media.js }}
+  <script type="text/javascript">
+    $(function () {
+      $('#disable-2fa-button').click(function () {
+        alert("The administrators for this site require all the staff to have two-factor authentication enabled, so it may not be disabled at this time.");
+      });
+    });
+  </script>
+{% endblock %}
+
+{% block title_ruler %}{% endblock %}
+
+{% block title_row %}
+  {% set tab = 'edit' %}
+  {% set user = request.profile %}
+  {% include "user/user-tabs.html" %}
+{% endblock %}
+
+{% block body %}
+  <div id="center-float">
+    <form id="edit-form" action="" method="post" class="form-area" enctype="multipart/form-data">
+      {% if form.errors or form_user.errors or form_info.errors %}
+        <div class="alert alert-danger alert-dismissable">
+          <a href="#" class="close">x</a>
+          {{ form.errors }}
+          <br>
+          {{ form_info.errors }}
+          <br>
+          {{ form_user.errors }}
+        </div>
+      {% endif %}
+
+      {% csrf_token %}
+
+      <table class="block-header grayed main-info">
+        <tr>
+          <td> {{ _('Full name') }}: </td>
+          <td> {{ form_user.first_name }} </td>
+        </tr>
+        <tr>
+          <td> {{ _('School') }}: </td>
+          <td> {{ form_user.last_name }} </td>
+        </tr>
+        <tr>
+          <td> {{ _('Date of birth') }}: </td>
+          <td> {{ form_info.date_of_birth }} </td>
+        </tr>
+        <tr>
+          <td> {{ _('Address') }}: </td>
+          <td> {{ form_info.address }} </td>
+        </tr>
+        <tr>
+          <td> {{ _('T-Shirt size') }}: </td>
+          <td> {{ form_info.tshirt_size }} </td>
+        </tr>
+        <tr>
+          <td> {{ _('Password') }}: </td>
+          <td>
+            <a href="{{ url('password_change') }}">
+              {{ _('Change your password') }}
+            </a>
+          </td>
+        </tr>
+        <tr>
+          <td> {{ _('Email') }}: </td>
+          <td>
+            {{ request.user.email }}
+            <a href="{{ url('email_change') }}">
+              ({{ _('Change email') }})
+            </a>
+          </td>
+        </tr>
+        <tr>
+          <td>{{ _('Avatar') }}: </td>
+          <td>
+            {{ form.profile_image }}
+          </td>
+        </tr>
+        <tr>
+          <td>{{ _('Background') }}: </td>
+          <td>
+            {{ form.background_image }}
+          </td>
+        </tr>
+      </table>
+      <hr>
+
+      <div style="padding-top:0.5em" class="block-header">{{ _('Self-description') }}:</div>
+      {{ form.about }}
+      <hr>
+
+      <table border="0" style="padding-top:0.7em">
+        <tr>
+          <td style="vertical-align:top;">
+            <table style="padding-right:0.8em">
+              <tr title="{{ _('Select your closest major city') }}">
+                <td><label class="inline-header grayed">{{ _('Timezone') }}:</label></td>
+                <td><span class="fullwidth">{{ form.timezone }}</span></td>
+              </tr>
+              <tr>
+                <td><label class="inline-header grayed">{{ _('Preferred language') }}:</label></td>
+                <td><span class="fullwidth">{{ form.language }}</span></td>
+              </tr>
+              <tr>
+                <td><label class="inline-header grayed">{{ _('Editor theme') }}:</label></td>
+                <td><span class="fullwidth">{{ form.ace_theme }}</span></td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+      <br>
+      <div>
+        {% if profile.is_totp_enabled %}
+          {{ _('Two Factor Authentication is enabled.') }}
+          {% if require_staff_2fa and request.user.is_staff %}
+            <a id="disable-2fa-button" class="button inline-button">Disable</a>
+          {% else %}
+            <a href="{{ url('disable_2fa') }}" class="button inline-button">{{_('Disable')}}</a>
+          {% endif %}
+        {% else %}
+          {{ _('Two Factor Authentication is disabled.') }}
+          <a href="{{ url('enable_2fa') }}" class="button inline-button">{{_('Enable')}}</a>
+        {% endif %}
+      </div>
+      <br><br>
+      <input type="submit" style="float:right" value="{{ _('Update profile') }}" class="action-btn">
+    </form>
+  </div>
+{% endblock %}

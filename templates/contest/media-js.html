@@ -1,0 +1,430 @@
+<script src="//cdn.jsdelivr.net/npm/featherlight@1.7.14/release/featherlight.min.js" type="text/javascript" charset="utf-8"></script>
+<script type="text/javascript">
+  function scoretimeComparison(sub1, sub2) {
+    if (!sub2) return true;
+    // Higher score wins, or same score with faster time (lower seconds) wins
+    return sub1['score'] > sub2['score'] || (sub1['score'] === sub2['score'] && sub1['time'] < sub2['time']);
+  }
+
+  function highlightFirstSolve() {
+    // bucket to store submissions by problems
+    let bestSubmissions = {};
+
+    // get information
+    $('td a').each(function() {
+      var $anchor = $(this);
+      var link = $anchor.attr('data-featherlight');
+      if (link && link.includes('submissions')) {
+        let linkElements = link.split('/');
+
+        // get information
+        let problem = linkElements[linkElements.length - 2];
+        let scoreText = getCellScore($anchor);
+        let score = parseFloat(scoreText.replace(',', '.'));
+
+        // get time from data-time attribute (in seconds)
+        let $solvingTime = $anchor.find('.solving-time');
+        let time = $solvingTime.data('time');
+
+        if (time !== undefined && score) {
+          let curSubmission = {
+            'td': $anchor.parent(),
+            'score': score,
+            'time': time
+          };
+
+          // update best submissions
+          let curBest = bestSubmissions[problem];
+
+          if (scoretimeComparison(curSubmission, curBest)) {
+            bestSubmissions[problem] = curSubmission;
+          }
+        }
+      }
+    });
+    for (let problem in bestSubmissions) {
+      bestSubmissions[problem]['td'].addClass('first-solve');
+    }
+  }
+
+  function get_initial_rank() {
+    var ranks = $('.rank-td').map(function() {return this.innerHTML}).get();
+    var usernames = $('.user-name .rating a').map(function() {return this.text}).get();
+    window.user_rank = new Map();
+    for (var i = 0; i < ranks.length; i++) {
+      window.user_rank[usernames[i]] = ranks[i];
+    }
+  }
+
+  function add_initial_friend_rank() {
+    var usernames = $('.user-name .rating a').map(function() {return this.text}).get();
+
+    var is_virtual = [];
+    $('.user-name').each(function() {
+      if($(this).children('sub').length) {
+        is_virtual.push(1);
+      }
+      else is_virtual.push(0);
+    });
+
+    $('.rank-td').each(function(i) {
+      if (!is_virtual[i]) this.innerHTML += ' (' + window.user_rank[usernames[i]] + ')';
+    });
+  }
+
+  function getProblemLabelMap() {
+    var map = {};
+    $('#users-table thead th.problem-score-col').each(function () {
+      var code = $(this).find('.problem-code').text().trim();
+      var label = $(this).find('a').contents().filter(function () {
+        return this.nodeType === 3;
+      }).text().trim();
+      if (code && label) map[code] = label;
+    });
+    return map;
+  }
+
+  function getProblemMaxMap() {
+    var map = {};
+    $('#users-table thead th.problem-score-col').each(function () {
+      var code = $(this).find('.problem-code').text().trim();
+      var max = $(this).find('.point-denominator').text().trim();
+      if (code && max) map[code] = max;
+    });
+    return map;
+  }
+
+  function getCellScore($anchor) {
+    // Score is inside <span> child (e.g. <span>100</span> or <span>1<small> +2</small></span>)
+    var $span = $anchor.children('span').first();
+    if ($span.length) {
+      return $span.text().trim();
+    }
+    return $anchor.contents().filter(function () {
+      return this.nodeType === 3;
+    }).text().trim();
+  }
+
+  function getCellProblem($anchor) {
+    var link = $anchor.attr('data-featherlight') || '';
+    if (!link.includes('submissions') && !link.includes('quiz-attempts')) return null;
+    var parts = link.split('/');
+    return parts[parts.length - 2];
+  }
+
+  function snapshot_ranking() {
+    var snap = {};
+    $('#users-table tbody tr').each(function () {
+      var $row = $(this);
+      var username = $row.find('.user-name .rating a').first().text();
+      if (!username) return;
+      var rank = $row.find('.rank-td').text().trim();
+      var totalScore = $row.find('td:nth-child(' + ($row.children('td').length > 2 ? 3 : 2) + ')').text().trim();
+      var scores = {};
+      $row.find('td a[data-featherlight]').each(function () {
+        var prob = getCellProblem($(this));
+        if (prob) scores[prob] = getCellScore($(this));
+      });
+      snap[username] = {rank: rank, scores: scores, totalScore: totalScore};
+    });
+    return snap;
+  }
+
+  function apply_ranking_animations(oldSnap) {
+    if ($('#disable-animations-checkbox').is(':checked')) return;
+    var activities = [];
+    var labelMap = getProblemLabelMap();
+    var maxMap = getProblemMaxMap();
+
+    $('#users-table tbody tr:not(.pinned-row)').each(function () {
+      var $row = $(this);
+      var username = $row.find('.user-name .rating a').first().text();
+      if (!username) return;
+
+      var newRank = parseInt($row.find('.rank-td').text().trim()) || 0;
+
+      if (!oldSnap[username]) {
+        // New user on this page — show toast with new rank only
+        $row.find('td a[data-featherlight]').each(function () {
+          var prob = getCellProblem($(this));
+          if (!prob) return;
+          var $td = $(this).closest('td');
+          var newScore = getCellScore($(this));
+          if (!newScore || newScore === '0') return;
+          var label = labelMap[prob] || prob;
+          var newNum = parseFloat(newScore) || 0;
+          activities.push({
+            username: username,
+            problem: label,
+            oldScore: undefined,
+            newScore: newScore,
+            increased: true,
+            full: maxMap[prob] && newNum === parseFloat(maxMap[prob]),
+            frozen: $td.hasClass('frozen'),
+            rankDelta: 0,
+            oldRank: 0,
+            newRank: newRank,
+            $row: $row,
+            $td: $td
+          });
+        });
+        return;
+      }
+
+      var oldData = oldSnap[username];
+      var oldRank = parseInt(oldData.rank) || 0;
+      var rankDelta = oldRank - newRank;
+      var rankUp = newRank && oldRank && newRank < oldRank;
+
+      var oldScores = oldData.scores;
+      $row.find('td a[data-featherlight]').each(function () {
+        var prob = getCellProblem($(this));
+        if (!prob) return;
+        var $td = $(this).closest('td');
+        var newScore = getCellScore($(this));
+        var oldScore = oldScores[prob];
+        if (oldScore === undefined || newScore !== oldScore) {
+          var label = labelMap[prob] || prob;
+          var oldNum = parseFloat(oldScore || '0');
+          var newNum = parseFloat(newScore) || 0;
+          activities.push({
+            username: username,
+            problem: label,
+            oldScore: oldScore,
+            newScore: newScore,
+            increased: newNum > oldNum,
+            full: maxMap[prob] && newNum === parseFloat(maxMap[prob]),
+            frozen: $td.hasClass('frozen'),
+            rankDelta: rankDelta,
+            oldRank: oldRank,
+            newRank: newRank,
+            $row: rankUp ? $row : null,
+            $td: $td
+          });
+        }
+      });
+    });
+
+    if (activities.length > 0) {
+      pushActivities(activities);
+    }
+  }
+
+  function pushActivities(activities) {
+    var $container = $('#live-toasts');
+    if (!$container.length) {
+      $container = $('<div id="live-toasts"></div>').appendTo('body');
+    }
+
+    // Spread toasts evenly over ~8s (leaving 2s buffer before next refresh)
+    var spreadMs = Math.min(activities.length * 800, 8000);
+    var gap = activities.length > 1 ? spreadMs / (activities.length - 1) : 0;
+    var delay = 0;
+    activities.forEach(function (a, i) {
+      setTimeout(function () {
+        var cls;
+        if (a.frozen) {
+          cls = 'toast-frozen';
+        } else if (a.full) {
+          cls = 'toast-ac';
+        } else if (a.increased) {
+          cls = 'toast-partial';
+        } else {
+          cls = 'toast-down';
+        }
+
+        var scoreText = a.oldScore ? a.oldScore + ' \u2192 ' + a.newScore : a.newScore;
+        var rankText = '';
+        if (a.oldRank && a.newRank && a.oldRank !== a.newRank) {
+          rankText = '#' + a.oldRank + ' \u2192 #' + a.newRank;
+        } else if (a.newRank) {
+          rankText = '#' + a.newRank;
+        }
+        var rankCls = (a.newRank && a.oldRank && a.newRank < a.oldRank) ? 'toast-rank-up' : ((a.newRank && a.oldRank && a.newRank > a.oldRank) ? 'toast-rank-down' : '');
+
+        var $toast = $('<div>').addClass('live-toast ' + cls).append(
+          $('<div class="toast-problem">').text(a.problem),
+          $('<div class="toast-body">').append(
+            $('<span class="toast-user">').text(a.username),
+            $('<span class="toast-score">').text(scoreText),
+            rankText ? $('<span>').addClass('toast-rank ' + rankCls).text(rankText) : null
+          )
+        );
+
+        // Highlight table row/cell in sync with toast
+        // Remove first and force reflow to restart CSS animation
+        if (a.$row) { a.$row.removeClass('rank-up'); a.$row[0].offsetHeight; a.$row.addClass('rank-up'); }
+        if (a.$td) { a.$td.removeClass('new-solve'); a.$td[0].offsetHeight; a.$td.addClass('new-solve'); }
+        setTimeout(function () {
+          if (a.$row) a.$row.removeClass('rank-up');
+          if (a.$td) a.$td.removeClass('new-solve');
+        }, 3500);
+
+        $container.append($toast);
+        // Trigger reflow then add visible class for animation
+        $toast[0].offsetHeight;
+        $toast.addClass('toast-visible');
+
+        setTimeout(function () {
+          $toast.addClass('toast-exit');
+          setTimeout(function () { $toast.remove(); }, 500);
+        }, 4000);
+      }, delay);
+      delay += gap || 800;
+    });
+  }
+
+  function buildRankingUrl(opts) {
+    var friend = opts.friend !== undefined ? opts.friend : ($('#show-friends-checkbox').is(':checked') ? 1 : 0);
+    var virtual = opts.virtual !== undefined ? opts.virtual : ($('#show-virtual-checkbox').is(':checked') ? 1 : 0);
+    var page = opts.page || window.currentPage || 1;
+    var search = opts.search !== undefined ? opts.search : (window.currentSearch || '');
+    var url = `?friend=${friend}&virtual=${virtual}&page=${page}`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+    // Favorites: send user IDs from localStorage (max 50)
+    if ($('#show-favorites-checkbox').is(':checked')) {
+      var CONTEST_KEY = window.CONTEST_KEY || '';
+      try {
+        var favs = JSON.parse(localStorage.getItem('contest_fav_ids_' + CONTEST_KEY)) || {};
+        var ids = Object.keys(favs).slice(0, 50);
+        if (ids.length) url += '&favorites=' + ids.join(',');
+      } catch (e) {}
+    }
+    return url;
+  }
+
+  function update_ranking(opts) {
+    opts = opts || {};
+    if (!$('#users-table').length) {
+      return;
+    }
+    var isLiveRefresh = !opts.page && opts.search === undefined;
+    $('#loading-gif').show();
+    var url = buildRankingUrl(opts) + '&ajax=1';
+
+    var oldSnap = isLiveRefresh ? snapshot_ranking() : {};
+
+    $.get({
+      url: url,
+      success: function(HTML) {
+        $('#ranking-container').html(HTML);
+        // Update browser URL without reload
+        var stateUrl = buildRankingUrl(opts);
+        history.replaceState(null, '', stateUrl);
+        // Update tracked state
+        if (opts.page) window.currentPage = opts.page;
+        if (opts.search !== undefined) window.currentSearch = opts.search;
+
+        highlightFirstSolve();
+        $('#loading-gif').hide();
+        if (isLiveRefresh && Object.keys(oldSnap).length > 0) {
+          apply_ranking_animations(oldSnap);
+        }
+        if (typeof applyFavoriteStars === 'function') applyFavoriteStars();
+        if (typeof applyRowFilters === 'function') applyRowFilters();
+        if ($('#show-schools-checkbox').is(':checked')) $('.school').show();
+        if ($('#show-fullnames-checkbox').is(':checked')) $('.fullname').show();
+        if (opts.onComplete) opts.onComplete();
+      },
+      fail: function() {
+        console.log('Fail to update ranking');
+      }
+    });
+  }
+
+  $(function () {
+    $('.leaving-forever').click(function () {
+      return confirm('{{ _('Are you sure you want to leave?') }}\n' +
+        '{{ _('You cannot come back to a virtual participation. You will have to start a new one.') }}');
+    });
+
+    $('.first-join').click(function () {
+      let q = '{{ _('Are you sure you want to join?') }}\n' +
+      '{{ _('Joining a contest starts your timer, after which it becomes unstoppable.') }}';
+      {% if current_contest %}
+        q += " {{ _('By joining in this contest, you will automatically leave contest') }} \"{{ current_contest.name }}\". ";
+      {% endif %}
+      return confirm(q);
+    });
+
+    var url = '{{ url('contest_participation', contest.key, '__username__') }}';
+    var placeholder = $('#search-contest').replaceWith($('<select>').attr({
+      id: 'search-contest'
+    })).attr('placeholder');
+
+    $('#search-contest').select2({
+      placeholder: placeholder,
+      ajax: {
+        url: '{{ url('contest_user_search_select2_ajax', contest.key) }}',
+        cache: true,
+        delay: 250,
+      },
+      minimumInputLength: 1,
+      escapeMarkup: function (markup) {
+        return markup;
+      },
+      templateResult: function (data, container) {
+        return ('<img class="user-search-image" src="' + data.gravatar_url + '" width="24" height="24">' +
+          '<span class="' + data.display_rank + ' user-search-name">' + data.text + '</span>');
+      }
+    }).on('change', function () {
+      window.location.href = url.replace('__username__', $(this).val());
+    });
+
+    $('#show-schools-checkbox').click(function () {
+      $('.school').toggle();
+    });
+    $('#show-fullnames-checkbox').click(function () {
+      $('.fullname').toggle();
+    });
+
+    {% if request.user.is_authenticated %}
+      $('#show-friends-checkbox').click(function() {
+        update_ranking({page: 1});
+      });
+    {% endif %}
+    $('#show-virtual-checkbox').click(function() {
+      update_ranking({page: 1});
+    });
+    $('#show-total-score-checkbox').click(function() {
+      $('.problem-score-col').toggle();
+    })
+
+    $('#show-admin-checkbox').click(function() {
+      $('.contest-ranking-page').toggleClass('admin-mode');
+      $('#bulk-disqualify-btn').toggle(this.checked);
+    })
+
+    // Bulk disqualify modal handling
+    $('#bulk-disqualify-btn').click(function() {
+      $('#bulk-disqualify-modal').show();
+      $('#bulk-disqualify-usernames').focus();
+    });
+
+    $('#bulk-disqualify-close, #bulk-disqualify-cancel').click(function() {
+      $('#bulk-disqualify-modal').hide();
+      $('#bulk-disqualify-usernames').val('');
+    });
+
+    $('#bulk-disqualify-modal').click(function(e) {
+      if (e.target === this) {
+        $(this).hide();
+        $('#bulk-disqualify-usernames').val('');
+      }
+    });
+
+    highlightFirstSolve();
+    get_initial_rank();
+
+    {% if participation_tab %}
+      $('#show-virtual-checkbox').hide();
+      $('#show-virtual-label').hide();
+    {% else %}
+      {% if not contest.ended %}
+        clearInterval(window.rankingInterval);
+        window.rankingInterval = setInterval(update_ranking, 60 * 1000);
+      {% endif %}
+    {% endif %}
+  });
+
+</script>

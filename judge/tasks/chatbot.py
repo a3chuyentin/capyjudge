@@ -1,0 +1,323 @@
+"""
+Celery task for chatbot LLM processing.
+Handles conversation with native Poe tool calling for problem author assistance.
+"""
+
+import logging
+import time
+
+from celery import shared_task
+from django.core.cache import cache
+
+from judge.chatbot.cache import get_conversation, save_conversation
+from judge.chatbot.tools import get_tool_definitions, get_tool_executables
+from judge.markdown import markdown as render_markdown
+
+logger = logging.getLogger(__name__)
+
+SYSTEM_PROMPT = """You are an AI assistant helping problem authors create and manage competitive programming problems on LQDOJ (Le Quy Don Online Judge).
+
+You have access to tools to fetch problem information, templates, and reference code. Use them when needed.
+
+GUIDELINES:
+1. Use tools when you need specific information (problem details, code templates, etc.)
+2. Respond in Vietnamese by default (unless the user writes in English)
+3. Include code examples when relevant
+4. Be concise but thorough
+5. For checker/generator questions, always provide the relevant template first
+
+CODE STYLE:
+- Use `cin >> n;` directly — NEVER write `if (!(cin >> n)) return 0;` or similar defensive input checks
+- Use `vector` or define arrays as global variables — NEVER define C-style arrays inside main() like `int arr[] = {...}`
+- NEVER use `typedef` (e.g., `typedef long long ll`) or `#define` macros — write full type names
+- Use clear, meaningful variable names that help students understand the code
+- Use `#include <bits/stdc++.h>` and `using namespace std;`
+6. If asked to write code, provide complete, working examples
+
+GENERATOR SCRIPT BEST PRACTICES:
+When suggesting Generator Scripts:
+- USE comments (lines starting with # or //) to label subtasks for clarity
+- Add EMPTY LINES between subtasks for readability
+- Match the PERCENTAGE of tests per subtask to what's stated in the problem statement
+- Each non-comment line = one test case = space-separated arguments for the generator
+Example format:
+# Subtask 1: n <= 100 (30% = 3 tests)
+10 1001
+50 1002
+100 1003
+
+# Subtask 2: n <= 10000 (70% = 7 tests)
+1000 2001
+5000 2002
+...
+
+COMMON TOOL USAGE:
+- Problem info/metadata → get_problem_info
+- Problem statement/description → get_problem_statement
+- Writing checkers → get_checker_template, then get_existing_checker
+- Writing generators → MUST call BOTH: get_problem_statement AND get_generator_template
+- Reference solutions → get_ac_submissions
+- Writing editorials → get_solution_template
+- Test data help → get_test_data_docs
+
+COORDINATOR / REVIEW TOOLS:
+- Test data overview (checker, subtasks, points, generator) → get_test_data_config
+- Existing solution codes → get_solution_codes
+- Editorial content → get_editorial
+- Validator source code → get_validator_code
+- Interactive judge source → get_interactive_judge_code
+
+SCORING TYPES (IMPORTANT — do NOT comment on point distribution):
+- ICPC (partial=False): all-or-nothing. Any point values per test are fine.
+- IOI (partial=True): partial points per subtask. Points should sum to 100.
+- NEVER suggest changing test case points/scores — that is the author's choice.
+
+CRITICAL FOR GENERATORS:
+When asked to write a test generator, you MUST:
+1. Call BOTH tools: get_problem_statement AND get_generator_template
+2. Follow the C++ template structure EXACTLY - do NOT create your own format or use Python
+3. The generator takes command-line arguments: ./gen <mode> <args...> <seed>
+4. Print INPUT to stdout, ANSWER to stderr
+
+Generate COMPREHENSIVE test cases covering:
+- EDGE CASES: min/max values, boundaries (use exact values, not random)
+- PROBLEM-SPECIFIC: trees (line, star, binary), arrays (sorted, reverse), etc.
+- RANDOM CASES: various sizes within each subtask constraint
+
+GENERATOR SCRIPT FORMAT:
+- Comment LINES (starting with # or //) are allowed for labeling sections
+- NEVER use inline comments (e.g., "random 100 1001 // test" will FAIL)
+- Each non-comment line = space-separated args passed directly to generator"""
+
+STREAM_CACHE_PREFIX = "chatbot_stream"
+STREAM_CACHE_TTL = 300  # seconds
+
+# Timeout for LLM streaming (seconds). Tool-calling workflows need much more
+# time than the default 30s: each Poe API round-trip takes ~5s, and coordinator
+# requests can involve 5-10+ tool calls in sequence.
+LLM_TIMEOUT = 300
+
+# Reserve tokens for system prompt, current message, tool outputs, and response.
+RESERVED_TOKENS = 50_000
+# Rough approximation: 1 token ≈ 4 characters.
+CHARS_PER_TOKEN = 4
+
+
+def _max_history_chars(model_id):
+    """Compute the character budget for history based on the model's context window."""
+    from llm_service.config import get_config
+
+    config = get_config()
+    context_tokens = config.get_context_tokens(model_id)
+    available_tokens = context_tokens - RESERVED_TOKENS
+    return max(available_tokens, RESERVED_TOKENS) * CHARS_PER_TOKEN
+
+
+def _get_recent_messages(messages, model_id):
+    """Get recent conversation messages for LLM context.
+
+    Applies a model-aware character budget, keeping the most recent messages
+    that fit. The cache already caps stored messages (MAX_STORED_MESSAGES).
+    """
+    if not messages:
+        return []
+
+    max_chars = _max_history_chars(model_id)
+
+    result = []
+    total_chars = 0
+
+    for msg in reversed(messages):
+        content_len = len(msg.get("content", ""))
+        if total_chars + content_len > max_chars:
+            break
+        total_chars += content_len
+        result.append(msg)
+
+    result.reverse()
+    return result
+
+
+def _fix_latex(text):
+    """
+    Fix common LaTeX issues from LLM output before markdown rendering.
+    - Convert \\(...\\) to $...$ (markdown escapes backslash before arithmatex)
+    - Convert \\[...\\] to $$...$$
+    - Convert inline $$ to $ when used mid-paragraph
+    """
+    # 1. Convert \(...\) to $...$ and \[...\] to $$...$$
+    # Use simple string replace — regex breaks with nested parentheses in math
+    text = text.replace("\\(", "$").replace("\\)", "$")
+    text = text.replace("\\[", "$$").replace("\\]", "$$")
+
+    # 2. Fix inline $$: if $$ appears on a line with other text, convert to $
+    lines = text.split("\n")
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        if "$$" in stripped:
+            if not stripped.startswith("$$") or not stripped.endswith("$$"):
+                if stripped != "$$":
+                    line = line.replace("$$", "$")
+        result.append(line)
+    text = "\n".join(result)
+
+    return text
+
+
+@shared_task(bind=True)
+def chatbot_respond_task(self, user_id, problem_code, user_message):
+    """
+    Celery task to process chatbot message with native Poe tool calling.
+
+    Args:
+        user_id: The user's ID
+        problem_code: The problem code
+        user_message: The user's message
+
+    Returns:
+        Dict with response data {success, content, tool_calls, error}
+    """
+    try:
+        # Import here to avoid circular imports
+        from judge.models import Problem
+        from llm_service.config import get_config
+        from llm_service.llm_api import LLMService
+
+        # Get problem
+        problem = Problem.objects.get(code=problem_code)
+
+        # Load conversation history
+        conversation = get_conversation(user_id, problem_code)
+
+        # Add user message to history
+        conversation["messages"].append(
+            {
+                "role": "user",
+                "content": user_message,
+                "timestamp": int(time.time()),
+            }
+        )
+
+        # Initialize LLM service with selected model
+        config = get_config()
+        selected_model = conversation.get("model") or config.get_bot_name_for_chatbot()
+        llm = LLMService(
+            api_key=config.api_key,
+            bot_name=selected_model,
+            sleep_time=config.sleep_time,
+        )
+
+        # Build tool definitions and executables bound to this problem
+        tool_definitions = get_tool_definitions()
+        tool_executables = get_tool_executables(problem)
+
+        # Get conversation history (excluding current message)
+        recent_messages = _get_recent_messages(
+            conversation["messages"][:-1], model_id=selected_model
+        )
+
+        # Build system prompt with current problem context
+        system_prompt = (
+            SYSTEM_PROMPT + f"\n\nCURRENT PROBLEM CONTEXT:\n"
+            f"- Problem code: {problem.code}\n"
+            f"- Problem name: {problem.name}\n"
+            f"You are assisting with this specific problem. "
+            f"Use the tools to fetch its details when needed — "
+            f"do NOT ask the user for the problem code."
+        )
+
+        # Set up streaming partial cache writes
+        task_id = self.request.id
+        stream_key = f"{STREAM_CACHE_PREFIX}:{task_id}"
+        _last_write = [0, 0]  # [time, length]
+
+        def on_partial(text_so_far):
+            now = time.time()
+            text_len = len(text_so_far)
+            if (now - _last_write[0] >= 0.3) or (text_len - _last_write[1] >= 100):
+                cache.set(
+                    stream_key,
+                    {"text": text_so_far, "done": False},
+                    timeout=STREAM_CACHE_TTL,
+                )
+                _last_write[0] = now
+                _last_write[1] = text_len
+
+        # Call LLM with native tool calling
+        response = llm.call_llm_with_history(
+            conversation_messages=recent_messages,
+            current_prompt=user_message,
+            system_prompt=system_prompt,
+            tools=tool_definitions,
+            tool_executables=tool_executables,
+            strip_thinking=True,
+            on_partial=on_partial,
+            timeout=LLM_TIMEOUT,
+        )
+
+        # Mark stream as done
+        cache.set(
+            stream_key,
+            {"text": response or "", "done": True},
+            timeout=STREAM_CACHE_TTL,
+        )
+
+        if not response:
+            response = (
+                "Xin lỗi, AI đã xử lý nhưng không tạo được câu trả lời hoàn chỉnh "
+                "(có thể do model suy nghĩ quá lâu mà chưa đưa ra kết quả). "
+                "Vui lòng thử lại hoặc đặt câu hỏi cụ thể hơn."
+            )
+
+        # Fix LaTeX before markdown rendering
+        response = _fix_latex(response)
+
+        # Render markdown to HTML for display
+        try:
+            content_html = render_markdown(response)
+        except Exception as md_error:
+            logger.warning(f"Markdown rendering failed: {md_error}")
+            from django.utils.html import escape
+
+            content_html = (
+                '<div class="md-typeset content-description">'
+                + escape(response).replace("\n", "<br>")
+                + "</div>"
+            )
+
+        # Add assistant response to history
+        conversation["messages"].append(
+            {
+                "role": "assistant",
+                "content": response,
+                "content_html": content_html,
+                "timestamp": int(time.time()),
+            }
+        )
+
+        # Preserve model changes made during the LLM call (user may have switched)
+        current_conv = get_conversation(user_id, problem_code)
+        conversation["model"] = current_conv.get("model", conversation.get("model"))
+
+        # Save updated conversation
+        save_conversation(user_id, problem_code, conversation)
+
+        return {
+            "success": True,
+            "content": content_html,
+            "tool_calls": [],
+        }
+
+    except Problem.DoesNotExist:
+        return {
+            "success": False,
+            "error": f"Problem {problem_code} not found",
+        }
+
+    except Exception as e:
+        logger.error(f"Chatbot error for {problem_code}: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": str(e),
+        }

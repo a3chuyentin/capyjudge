@@ -1,0 +1,162 @@
+{% extends "two-column-content.html" %}
+
+{% block js_media %}
+  {% compress js %}
+    <script type="text/javascript">
+      $(function () {
+        var $status = $('#semantic-search-status');
+        var $results = $('#semantic-search-results');
+        var $tbody = $results.find('tbody');
+        var $empty = $('#semantic-search-empty');
+        var activeMode = 'query';
+
+        $('.semantic-search-tab').on('click', function () {
+          var target = $(this).data('target');
+          activeMode = $(this).data('mode');
+          $('.semantic-search-tab').removeClass('active');
+          $(this).addClass('active');
+          $('.semantic-search-card').hide();
+          $(target).show();
+        });
+
+        $('#semantic-problem').select2({
+          placeholder: '{{ _('Select a problem...') }}',
+          ajax: {
+            url: '{{ url('problem_select2') }}',
+            delay: 250,
+            cache: true
+          },
+          width: '100%'
+        });
+
+        function setStatus(message, isError) {
+          $status.text(message || '');
+          $status.toggleClass('red', !!isError);
+          $status.toggleClass('gray', !isError);
+        }
+
+        function renderResults(results) {
+          $tbody.empty();
+          if (!results.length) {
+            $results.hide();
+            $empty.show();
+            return;
+          }
+
+          $empty.hide();
+          $results.show();
+          results.forEach(function (result) {
+            var $row = $('<tr>');
+            var $problem = $('<td>');
+            $('<a>').attr('href', result.url).text(result.code).appendTo($problem);
+            $('<div>').addClass('semantic-result-name').text(result.name).appendTo($problem);
+            $('<td>').text(result.points).appendTo($row);
+            $('<td>').text(result.group || '').appendTo($row);
+            var $types = $('<td>');
+            (result.types || []).forEach(function (t) {
+              $('<span>').addClass('semantic-type-tag').text(t).appendTo($types);
+            });
+            $types.appendTo($row);
+            $('<td>').text(Number(result.score).toFixed(4)).appendTo($row);
+            $row.prepend($problem);
+            $tbody.append($row);
+          });
+        }
+
+        function runSearch(url, data) {
+          setStatus('{{ _('Searching...') }}', false);
+          $empty.hide();
+          $.ajax({
+            url: url,
+            method: 'GET',
+            data: data,
+            success: function (response) {
+              setStatus('', false);
+              renderResults(response.results || []);
+            },
+            error: function (xhr) {
+              var response = xhr.responseJSON || {};
+              setStatus(response.error || '{{ _('Search failed') }}', true);
+              renderResults([]);
+            }
+          });
+        }
+
+        function runActiveSearch() {
+          if (activeMode === 'similar') {
+            runSearch('{{ url('semantic_search_similar_api') }}', {
+              problem_id: $('#semantic-problem').val(),
+              limit: $('#semantic-limit').val()
+            });
+          } else {
+            runSearch('{{ url('semantic_search_api') }}', {
+              q: $('#semantic-query').val(),
+              limit: $('#semantic-limit').val()
+            });
+          }
+        }
+
+        $('#semantic-search-submit').on('click', runActiveSearch);
+        $('#semantic-query-form, #semantic-similar-form').on('submit', function (event) {
+          event.preventDefault();
+          runActiveSearch();
+        });
+      });
+    </script>
+  {% endcompress %}
+{% endblock %}
+
+{% block left_sidebar %}
+  {% include "problem/left-sidebar.html" %}
+{% endblock %}
+
+{% block middle_content %}
+  <div class="semantic-search-page">
+    <h2>{{ _('Semantic Search') }}</h2>
+    <p class="gray">
+      {{ _('Semantic search over public problems.') }}
+    </p>
+
+    <div class="semantic-search-tabs">
+      <button type="button" class="semantic-search-tab active" data-mode="query" data-target="#semantic-query-form">
+        {{ _('Search by text') }}
+      </button>
+      <button type="button" class="semantic-search-tab" data-mode="similar" data-target="#semantic-similar-form">
+        {{ _('Find similar problems') }}
+      </button>
+    </div>
+
+    <div class="semantic-search-controls">
+      <form id="semantic-query-form" class="semantic-search-card semantic-query-card">
+        <textarea id="semantic-query" name="q" rows="7" placeholder="{{ _('e.g. quy hoạch động trên cây') }}"></textarea>
+      </form>
+
+      <form id="semantic-similar-form" class="semantic-search-card" style="display: none">
+        <select id="semantic-problem" name="problem_id"></select>
+      </form>
+    </div>
+
+    <div class="semantic-limit-row">
+      <input id="semantic-limit" type="hidden" value="{{ default_limit }}">
+      <button id="semantic-search-submit" type="button" class="action-btn">{{ _('Search') }}</button>
+      <span id="semantic-search-status" class="gray"></span>
+    </div>
+
+    <p id="semantic-search-empty" class="gray semantic-empty-state">
+      {{ _('No results found.') }}
+    </p>
+
+    <table id="semantic-search-results" class="table semantic-results-table">
+      <thead>
+        <tr>
+          <th>{{ _('Problem') }}</th>
+          <th>{{ _('Points') }}</th>
+          <th>{{ _('Group') }}</th>
+          <th>{{ _('Types') }}</th>
+          <th>{{ _('Similarity') }}</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+{% endblock %}

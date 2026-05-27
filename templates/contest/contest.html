@@ -1,0 +1,111 @@
+{% extends "two-column-content.html" %}
+{% set page_type = 'detail' %}
+
+{% block left_sidebar %}
+  {% set title = contest.name %}
+  {% include "contest/contest-tabs.html" %}
+{% endblock %}
+
+{% block js_media %}
+  {% include "contest/media-js.html" %}
+  {% include "comments/media-js.html" %}
+  {% include "actionbar/media-js.html" %}
+  {% include "contest/contest-datetime-js.html" %}
+  {% include "contest/pdf-problemset-js.html" %}
+  <script type="text/javascript">
+
+    $(function () {
+      initContestProblemsetPdf('{{ url("contest_problemset", contest.key) }}');
+      {% if contest.use_clarifications %}
+        window.register_contest_notification("{{url('contest_clarification_ajax', contest.key)}}");
+      {% endif %}
+    });
+  </script>
+{% endblock %}
+
+{% block two_col_media %}
+  {% include "comments/media-css.html" %}
+{% endblock %}
+
+{% block middle_content %}
+  {% include "contest/contest-datetime.html" %}
+
+  {% if request.user.is_authenticated %}
+    {% if contest.can_join or is_editor or is_tester %}
+      {% set in_contest = contest.is_in_contest(request.user) %}
+      {% if contest.ended %}
+{# Allow users to leave the virtual contest #}
+        {% if in_contest %}
+          <form action="{{ url('contest_leave', contest.key) }}" method="post" class="contest-join-pseudotab">
+            {% csrf_token %}
+            <input type="submit" class="action-btn large leaving-forever" value="{{ _('Leave contest') }}">
+          </form>
+        {% else %}
+{# Allow users to virtual join #}
+          <form action="{{ url('contest_join', contest.key) }}" method="post" class="contest-join-pseudotab">
+            {% csrf_token %}
+            <input type="submit" class="action-btn large" value="{{ _('Virtual join') }}">
+          </form>
+        {% endif %}
+      {% else %}
+{# Allow users to leave the contest #}
+        {% if in_contest %}
+          <form action="{{ url('contest_leave', contest.key) }}" method="post" class="contest-join-pseudotab">
+            {% csrf_token %}
+            <input type="submit" class="action-btn large" value="
+                                                                 {%- if request.participation.spectate %}
+                                                                   {{- _('Stop spectating') -}}
+                                                                 {% else %}
+                                                                   {{- _('Leave contest') -}}
+                                                                 {% endif %}">
+          </form>
+        {% elif is_editor or is_tester or live_participation.ended %}
+          <form action="{{ url('contest_join', contest.key) }}" method="post" class="contest-join-pseudotab">
+            {% csrf_token %}
+            <input type="submit" class="action-btn large" value="{{ _('Spectate contest') }}">
+          </form>
+        {% else %}
+          <form action="{{ url('contest_join', contest.key) }}" method="post" class="contest-join-pseudotab">
+            {% csrf_token %}
+            <input type="submit" class="action-btn large {% if not has_joined %}first-join{% endif %}"
+                   value="{{ _('Join contest') }}">
+          </form>
+        {% endif %}
+      {% endif %}
+    {% endif %}
+  {% elif contest.can_join %}
+    <form action="{{ url('auth_login') }}" method="get" class="contest-join-pseudotab unselectable">
+      <input type="hidden" name="next" value="{{ LOGIN_RETURN_PATH|urlencode }}">
+      <input type="submit" class="action-btn large" value="{{ _('Login to participate') }}">
+    </form>
+  {% endif %}
+  <div style="clear: both"></div>
+
+  {% if contest.is_organization_private %}
+    <div style="display: flex; margin-bottom: 1em">
+      {% for org in organizations %}
+        {% with edit_url = url('contest_edit', contest.key) if org in editable_organizations
+        else None %}
+        {% include "organization/tag.html" %}
+      {% endwith %}
+  {% endfor %}
+  </div>
+{% endif %}
+
+{% if course %}
+  <div style="display: flex; margin-bottom: 1em">
+    {% with edit_url = url('contest_edit', contest.key) if is_editable_course else None %}
+      {% include "course/tag.html" %}
+    {% endwith %}
+  </div>
+{% endif %}
+
+<div style="padding: 0 1em;">
+  {{ contest.description|markdown|reference|str|safe }}
+</div>
+
+<div style="clear: both"></div>
+{% include "actionbar/list.html" %}
+{% include "comments/list.html" %}
+<iframe name="raw_problemset" id="raw_problemset" style="visibility: hidden;width: 0; height: 0;"></iframe>
+{% endblock %}

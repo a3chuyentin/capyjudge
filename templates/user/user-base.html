@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block media %}
+  {% block user_media %}{% endblock %}
+{% endblock %}
+
+{% block js_media %}
+  {% if request.user.is_authenticated %}
+    <script type="text/javascript">
+      $(function () {
+        $("#message-button").on("click", function () {
+          $.get("{{ url('get_or_create_room') }}", {
+            "other": "{{ chat_param(request.profile, user) }}"
+          }, function (response) {
+            window.location.href = response.url;
+          }).fail(function (error) {
+            console.log("Error: ", error);
+          });
+        });
+      });
+    </script>
+  {% endif %}
+  {% block user_js_media %}{% endblock %}
+{% endblock %}
+
+{% block body %}
+  <div class="user-info-page">
+    <div class="user-sidebar">
+      <div class="sidebar-avatar-wrapper">
+        <img class="user-img user-profile-img" src="{{ gravatar(user.id, 145) }}">
+      </div>
+      {% if request.user.is_authenticated and request.profile != user %}
+        <div class="sidebar-actions">
+          <form method="post" action="{{ url('user_toggle_follow', user.username) }}">
+            {% csrf_token %}
+            <button class="sidebar-btn {{ 'unfollow' if followed else 'follow' }}">
+              {% if followed %}
+                <i class="fa fa-remove"></i> {{ _('Unfollow') }}
+              {% else %}
+                <i class="fa fa-user-plus"></i> {{ _('Follow') }}
+              {% endif %}
+            </button>
+          </form>
+          <button class="sidebar-btn message" id="message-button">
+            <i class="fa fa-envelope"></i> {{ _('Message') }}
+          </button>
+        </div>
+      {% endif %}
+      {% if rating_count and rating_count > 0 %}
+        <div class="sidebar-contest-stats">
+          <div class="contest-stat-row">
+            <span class="stat-label">{{_('Contests written')}}</span>
+            <span class="stat-value">{{ rating_count }}</span>
+          </div>
+          <div class="contest-stat-row">
+            <span class="stat-label">{{ _('Min. rating') }}</span>
+            <span class="stat-value">{{ rating_number(min_rating) }}</span>
+          </div>
+          <div class="contest-stat-row">
+            <span class="stat-label">{{ _('Max rating') }}</span>
+            <span class="stat-value">{{ rating_number(max_rating) }}</span>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+    <div class="user-content">{% block user_content %}{% endblock %}</div>
+  </div>
+{% endblock %}

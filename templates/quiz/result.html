@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+
+{% block media %}
+{# Styles moved to resources/quiz.scss #}
+{% endblock %}
+
+{% block js_media %}
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('.file-preview-toggle').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+          e.preventDefault();
+          var container = this.closest('.file-item-collapsible');
+          var preview = container.querySelector('.file-preview-collapsible');
+          var icon = this.querySelector('i');
+          var isExpanded = this.getAttribute('aria-expanded') === 'true';
+
+          if (isExpanded) {
+            preview.style.display = 'none';
+            icon.classList.remove('fa-chevron-up');
+            icon.classList.add('fa-chevron-down');
+            this.setAttribute('aria-expanded', 'false');
+          } else {
+            preview.style.display = 'block';
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-up');
+            this.setAttribute('aria-expanded', 'true');
+          }
+        });
+      });
+    });
+  </script>
+{% endblock %}
+
+{% block body %}
+  {% set _is_result_hidden = is_result_hidden is defined and is_result_hidden %}
+  <div class="quiz-result-page">
+    <div class="result-header">
+      {% if not _is_result_hidden %}
+        <div
+          class="result-score {% if percentage >= 90 %}excellent{% elif percentage >= 70 %}good{% elif percentage >= 50 %}average{% else %}poor{% endif %}">
+          {{ attempt.score|round(1) if attempt.score else 0 }} / {{ attempt.max_score|round(1) if attempt.max_score else 0
+          }}
+        </div>
+        <div class="result-percentage">
+          {{ percentage }}%
+        </div>
+      {% else %}
+        <div class="result-score">
+          <i class="fa fa-check-circle"></i>
+        </div>
+        <div class="result-percentage">{{ _('Submitted Successfully') }}</div>
+        <p>{{ _('Results for this quiz are hidden.') }}</p>
+      {% endif %}
+      <div class="result-meta">
+        <p>
+          {{ _('Started') }}: {{ attempt.start_time|date(_("F j, Y, G:i")) }}
+          {% if attempt.end_time %}
+            | {{ _('Submitted') }}: {{ attempt.end_time|date(_("F j, Y, G:i")) }}
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="result-actions">
+      <a href="{{ detail_url }}" class="btn btn-default">
+        <i class="fa fa-arrow-left"></i> {{ _('Back to Quiz') }}
+      </a>
+      {% if can_retake %}
+        <form method="post" action="{{ start_url }}" style="display: inline;">
+          {% csrf_token %}
+          <button type="submit" class="action-btn">
+            <i class="fa fa-repeat"></i> {{ _('Retake Quiz') }}
+          </button>
+        </form>
+      {% endif %}
+      {% if can_edit %}
+        <a href="{{ url('attempt_grade', attempt.id) }}" class="btn btn-default">
+          <i class="fa fa-pencil"></i> {{ _('Grade') }}
+        </a>
+      {% endif %}
+    </div>
+
+    {% if not _is_result_hidden %}
+      <h2>{{ _('Your Answers') }}</h2>
+
+      {% set _show_correctness = show_correctness is defined and show_correctness %}
+      {% for answer in answers %}
+        {% set question = answer.question %}
+        <div
+          class="answer-card {% if _show_correctness %}{% if answer.is_correct %}correct{% elif answer.graded_at %}incorrect{% else %}pending{% endif %}{% endif %}">
+          <div class="answer-header">
+            <div class="question-info">
+              <strong>{{ _('Question') }} {{ loop.index }}</strong>
+              <span class="badge">{{ question.get_question_type_display() }}</span>
+            </div>
+            {% if _show_correctness %}
+              <div class="answer-status">
+                {% if answer.is_correct %}
+                  <i class="fa fa-check-circle correct"></i>
+                  <span>{{ answer.points|round(1) }} / {{ answer._max_points|round(1) }} {{ _('points') }}</span>
+                {% elif answer.graded_at %}
+                  <i class="fa fa-times-circle incorrect"></i>
+                  <span>{{ answer.points|round(1) }} / {{ answer._max_points|round(1) }} {{ _('points') }}</span>
+                {% else %}
+                  <i class="fa fa-clock-o pending"></i>
+                  <span>{{ _('Pending grading') }}</span>
+                {% endif %}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="question-content content-description">
+            {{ question.content|markdown|reference|str|safe }}
+          </div>
+
+          <div class="user-answer">
+            <strong>{{ _('Your answer') }}:</strong>
+            {% if question.question_type in ['MC', 'TF'] %}
+              {% for choice in question.choices %}
+                {% if choice.id == answer.answer %}
+                  <div class="choice-content content-description">{{ choice.text|markdown|reference|str|safe }}</div>
+                {% endif %}
+              {% endfor %}
+            {% elif question.question_type == 'MA' %}
+              {% set selected = answer.answer|default('[]') %}
+              <ul>
+                {% for choice in question.choices %}
+                  {% if choice.id in selected %}
+                    <li><div class="choice-content content-description">{{ choice.text|markdown|reference|str|safe }}</div></li>
+                  {% endif %}
+                {% endfor %}
+              </ul>
+            {% elif question.question_type in ['SA', 'ES'] %}
+              <div class="answer-text-content content-description">{{ answer.answer|markdown|reference|str|safe if answer.answer else _('No answer provided') }}</div>
+            {% else %}
+              <div class="answer-text-content">{{ answer.answer or _('No answer provided') }}</div>
+            {% endif %}
+          </div>
+
+          {% if question.question_type == 'ES' and answer.files.exists() %}
+            <div class="answer-files">
+              <h4><i class="fa fa-paperclip"></i> {{ _('Attached Files') }}</h4>
+              {% for file in answer.files.all() %}
+                {% set ext = file.get_file_extension() %}
+                {% set has_preview = ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'pdf'] %}
+                <div class="file-item-collapsible{% if has_preview %} has-preview{% endif %}">
+                  <div class="file-item-header">
+                    <span class="file-icon"><i class="fa fa-file"></i></span>
+                    <a href="{{ file.file.url }}" target="_blank" class="file-name">{{ file.original_filename }}</a>
+                    <span class="file-size">({{ file.get_file_size() }})</span>
+                    {% if has_preview %}
+                      <button type="button" class="file-preview-toggle" aria-expanded="false">
+                        <i class="fa fa-chevron-down"></i>
+                      </button>
+                    {% endif %}
+                  </div>
+                  {% if ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'] %}
+                    <div class="file-preview-collapsible file-preview-image" style="display: none;">
+                      <img src="{{ file.file.url }}" alt="{{ file.original_filename }}" loading="lazy">
+                    </div>
+                  {% elif ext == 'pdf' %}
+                    <div class="file-preview-collapsible file-preview-pdf" style="display: none;">
+                      <iframe src="{{ file.file.url }}" title="{{ file.original_filename }}"></iframe>
+                    </div>
+                  {% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          {% if show_answers and question.correct_answers %}
+            <div class="correct-answer">
+              <strong>{{ _('Correct answer') }}:</strong>
+              {% set correct = question.correct_answers.get('answers', []) %}
+              {% if question.question_type in ['MC', 'TF'] %}
+                {% for choice in question.choices %}
+                  {% if choice.id == correct %}
+                    <div class="choice-content content-description">{{ choice.text|markdown|reference|str|safe }}</div>
+                  {% endif %}
+                {% endfor %}
+              {% elif question.question_type == 'MA' %}
+                <ul>
+                  {% for choice in question.choices %}
+                    {% if choice.id in correct %}
+                      <li><div class="choice-content content-description">{{ choice.text|markdown|reference|str|safe }}</div></li>
+                    {% endif %}
+                  {% endfor %}
+                </ul>
+              {% elif question.question_type == 'SA' %}
+                {% if correct is string %}
+                  <span class="sa-correct-answer">{{ correct }}</span>
+                {% else %}
+                  {% for ans in correct %}
+                    <span class="sa-correct-answer">{{ ans }}</span>
+                    {% if not loop.last %}, {% endif %}
+                  {% endfor %}
+                {% endif %}
+              {% endif %}
+            </div>
+          {% endif %}
+
+          {% if show_answers and question.explanation %}
+            <div class="explanation">
+              <strong>{{ _('Explanation') }}:</strong>
+              <div class="content-description">
+                {{ question.explanation|markdown|reference|str|safe }}
+              </div>
+            </div>
+          {% endif %}
+
+          {% if answer.feedback %}
+            <div class="teacher-feedback">
+              <strong>{{ _('Teacher Feedback') }}:</strong>
+              <div class="feedback-content">
+                {{ answer.feedback }}
+              </div>
+            </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+
+    {% endif %}{# end not _is_result_hidden #}
+
+    {% if can_retake %}
+      <div class="retake-section">
+        <form method="post" action="{{ start_url }}">
+          {% csrf_token %}
+          <button type="submit" class="action-btn large">
+            <i class="fa fa-repeat"></i> {{ _('Retake Quiz') }}
+          </button>
+        </form>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

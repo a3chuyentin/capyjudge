@@ -1,0 +1,892 @@
+{% extends "two-column-content.html" %}
+{% block two_col_media %}
+  <link rel="stylesheet" href="{{ static('libs/nouislider.min.css') }}">
+  <style>
+    #search-author {
+      width: 100%;
+    }
+
+    .point-input {
+      height: 2em;
+      padding-top: 4px;
+    }
+
+    .filter-form-group {
+      margin-bottom: 1em;
+    }
+
+    .bold-text {
+      font-weight: bold;
+    }
+
+    .margin-label {
+      margin-bottom: 0.5em;
+      display: block;
+    }
+
+    .form-submit-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 1em;
+    }
+
+    .compact-filter {
+      max-width: 400px;
+      margin-bottom: 20px;
+    }
+
+    .queue-tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 1.5em;
+      border-bottom: 2px solid var(--border_gray, #ddd);
+    }
+
+    .queue-tab {
+      padding: 0.5em 1.2em;
+      text-decoration: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      font-weight: 500;
+    }
+
+    .queue-tab.active {
+      border-bottom-color: var(--theme_color, #1a5276);
+      font-weight: 700;
+    }
+
+    .queue-tab .badge {
+      display: inline-block;
+      padding: 0.15em 0.5em;
+      border-radius: 10px;
+      font-size: 0.8em;
+      font-weight: 600;
+      margin-left: 0.3em;
+      vertical-align: middle;
+    }
+
+    .status-filters {
+      display: flex;
+      gap: 0.5em;
+      margin-bottom: 1em;
+      flex-wrap: wrap;
+    }
+
+    .status-filter {
+      padding: 0.3em 0.8em;
+      border-radius: 4px;
+      text-decoration: none;
+      font-size: 0.9em;
+    }
+
+    .status-filter.active {
+      font-weight: 700;
+    }
+
+    .request-info {
+      font-size: 0.85em;
+      margin-top: 0.3em;
+    }
+
+    .request-status {
+      display: inline-block;
+      padding: 0.15em 0.5em;
+      border-radius: 3px;
+      font-size: 0.85em;
+      font-weight: 600;
+    }
+
+    .feedback-box {
+      margin-top: 0.5em;
+      padding: 0.5em;
+      border-left: 3px solid;
+      font-size: 0.9em;
+    }
+  </style>
+{% endblock %}
+{% block js_media %}
+  <script type="text/javascript">
+  // Set global variables from Django template
+    window.point_start = {{ point_start }};
+    window.point_end = {{ point_end }};
+    window.point_values = {{ point_values | json | safe }};
+  </script>
+  {% compress js %}
+    <script src="{{ static('libs/nouislider.min.js') }}" type="text/javascript"></script>
+    <script type="text/javascript">
+      $(function () {
+    // Filter form functionality
+        var $form = $('form#filter-form');
+        var $search = $('#search');
+
+        function prep_form() {
+          $search.prop('disabled', !$search.val());
+        }
+
+        function clean_submit() {
+          prep_form();
+          $form.submit();
+        }
+
+        $('#search-author').select2({
+          multiple: 1,
+          placeholder: '{{ _('Authors') }}...',
+          ajax: {
+            url: '{{ url('problem_authors_select2_ajax') }}',
+            delay: 250,
+            cache: true,
+          }
+        });
+
+    // Handle Enter key press in search input
+        $search.keypress(function (e) {
+          if (e.keyCode == 13)
+            $('#go').click();
+        });
+
+        $('#go').click(clean_submit);
+
+    // Point range slider
+        var intFormatter = {
+          to: function (value) {
+            return value;
+          },
+          from: function (value) {
+            return +value;
+          }
+        };
+        var $slider = $('#point-slider');
+        if ($slider.length) {
+          var $start = $('#point-start');
+          var $end = $('#point-end');
+
+          noUiSlider.create($slider[0], {
+            start: [point_start, point_end],
+            connect: true,
+            snap: true,
+            tooltips: [intFormatter, intFormatter],
+            range: point_values
+          }).on('change', function (values) {
+            var start = +values[0], end = +values[1];
+            $start.prop('disabled', start === point_values.min).val(start);
+            $end.prop('disabled', end === point_values.max).val(end);
+          });
+        }
+
+    // Function to handle the "Mark private" button click
+        $(".mark-private-button").on("click", function () {
+          const button = $(this);
+          const problemDiv = button.closest(".problem-container");
+          const problemId = button.data("problem-id");
+
+          $.ajax({
+            url: "{{url('internal_mark_problem_private')}}",
+            type: "POST",
+            data: {
+              id: problemId,
+            },
+            success: function (response) {
+              problemDiv.hide();
+            },
+            error: function () {
+              console.log("An error occurred. Please try again.");
+            },
+          });
+        });
+
+    // Function to handle the "Publish" button click
+        $(".publish-button").on("click", function () {
+          const button = $(this);
+          const problemDiv = button.closest(".problem-container");
+          const problemId = button.data("problem-id");
+
+          if (!confirm('{{_("Are you sure you want to publish this problem? This will make it public and remove organization restrictions.")}}')) {
+            return;
+          }
+
+          button.prop('disabled', true);
+          $.ajax({
+            url: "{{url('internal_publish_problem')}}",
+            type: "POST",
+            data: { id: problemId },
+            success: function (response) {
+              if (response.success) {
+                problemDiv.hide();
+              } else {
+                alert(response.error || '{{_("An error occurred.")}}');
+                button.prop('disabled', false);
+              }
+            },
+            error: function () {
+              alert('{{_("An error occurred. Please try again.")}}');
+              button.prop('disabled', false);
+            },
+          });
+        });
+
+    // Function to handle the "Reject" button click - show modal
+        $(".reject-button").on("click", function () {
+          const problemId = $(this).data("problem-id");
+          const problemName = $(this).data("problem-name");
+          const modal = $('#reject-modal');
+          modal.data('problem-id', problemId);
+          $('#reject-modal-title').text('{{_("Reject")}} - ' + problemName);
+          $('#reject-feedback').val('');
+          $('body').css('overflow', 'hidden');
+          modal.addClass('show');
+        });
+
+    // Submit rejection
+        $('#submit-reject').on('click', function () {
+          const modal = $('#reject-modal');
+          const problemId = modal.data('problem-id');
+          const feedback = $('#reject-feedback').val();
+          const button = $(this);
+
+          button.prop('disabled', true);
+          $.ajax({
+            url: "{{url('internal_reject_problem')}}",
+            type: "POST",
+            data: { id: problemId, feedback: feedback },
+            success: function (response) {
+              if (response.success) {
+                $('body').css('overflow', 'auto');
+                modal.removeClass('show');
+                location.reload();
+              } else {
+                alert(response.error || '{{_("An error occurred.")}}');
+              }
+            },
+            error: function () {
+              alert('{{_("An error occurred. Please try again.")}}');
+            },
+            complete: function () {
+              button.prop('disabled', false);
+            },
+          });
+        });
+
+    // Function to poll for tagging task result
+        function pollTagTask(taskId, button, originalText, initialData) {
+          var pollInterval = setInterval(function() {
+            $.ajax({
+              url: '{{ url('task_status_ajax') }}?id=' + taskId,
+              type: 'GET',
+              success: function(data) {
+                if (data.code === 'SUCCESS') {
+                  clearInterval(pollInterval);
+                  button.prop('disabled', false);
+                  button.html(originalText);
+
+                  if (data.success && data.is_valid) {
+                    // Merge task result with initial data (all_types, current_types, etc.)
+                    var fullResponse = $.extend({}, initialData, data);
+                    showSuggestionModal(fullResponse);
+                  } else if (data.success && !data.is_valid) {
+                    var reason = data.reason || '{{_("Problem format is incomplete")}}';
+                    alert('{{_("Could not analyze: ")}}' + reason);
+                  } else {
+                    alert('{{_("Problem tagging failed: ")}}' + (data.error || 'Unknown error occurred'));
+                  }
+                } else if (data.code === 'FAILURE') {
+                  clearInterval(pollInterval);
+                  button.prop('disabled', false);
+                  button.html(originalText);
+                  alert('{{_("Problem tagging failed: ")}}' + (data.error || 'Task failed'));
+                }
+              },
+              error: function() {
+                clearInterval(pollInterval);
+                button.prop('disabled', false);
+                button.html(originalText);
+                alert('{{_("Problem tagging failed: Network error occurred - please try again later")}}');
+              }
+            });
+          }, 2000);
+        }
+
+    // Function to handle the "Problem Tag" button click
+        $(".problem-tag-button").on("click", function () {
+          const button = $(this);
+          const problemCode = button.data("problem-code");
+          const originalText = button.html();
+
+      // Disable button and show loading
+          button.prop('disabled', true);
+          button.html('<i class="fa fa-spinner fa-spin"></i> {{_("Analyzing...")}}');
+
+          $.ajax({
+            url: "{{url('internal_problem_tag')}}",
+            type: "GET",
+            data: {
+              problem_code: problemCode
+            },
+            success: function (response) {
+              if (response.success && response.task_id) {
+                // Store initial data and poll for task result
+                pollTagTask(response.task_id, button, originalText, response);
+              } else if (response.error) {
+                button.prop('disabled', false);
+                button.html(originalText);
+                alert('{{_("Problem tagging failed: ")}}' + response.error);
+              }
+            },
+            error: function () {
+              button.prop('disabled', false);
+              button.html(originalText);
+
+              alert('{{_("Problem tagging failed: Network error occurred - please try again later")}}');
+            }
+          });
+        });
+
+    // Function to show the suggestion modal
+        function showSuggestionModal(data) {
+          const modal = $('#suggestion-modal');
+
+          $('#apply-suggestions').show();
+
+          $('#modal-title').text('{{_("Suggestion Tag")}} - ' + data.problem_name);
+
+          $('#success-info').show();
+
+          $('#suggested-points').val(data.predicted_points || data.current_points);
+          if (data.predicted_points && data.predicted_points !== data.current_points) {
+            $('#points-predicted').show().text('{{_("AI Suggested: ")}}' + data.predicted_points);
+          } else {
+            $('#points-predicted').hide();
+          }
+
+      // Initialize Select2 for types
+          const typesSelect = $('#suggested-types');
+          typesSelect.empty();
+
+      // Add all types as options
+          data.all_types.forEach(function (type) {
+            const option = new Option(type.name, type.id, false, false);
+            typesSelect.append(option);
+          });
+
+          const currentTypeIds = data.current_types.map(t => t.id.toString());
+          typesSelect.val(currentTypeIds);
+
+      // Add predicted types to selection if they're not already selected
+          if (data.predicted_types && data.predicted_types.length > 0) {
+            const predictedTypeIds = data.predicted_types.map(t => t.id.toString());
+            const combinedSelection = [...new Set([...currentTypeIds, ...predictedTypeIds])];
+            typesSelect.val(combinedSelection);
+
+        // Show prediction info
+            const predictedNames = data.predicted_types.map(t => t.name).join(', ');
+            $('#types-predicted').show().text('{{_("AI Suggested: ")}}' + predictedNames);
+          } else {
+            $('#types-predicted').hide();
+          }
+
+      // Initialize Select2
+          typesSelect.select2({
+            placeholder: '{{_("Select problem types...")}}',
+            allowClear: true,
+            width: '100%'
+          });
+
+      // Store problem code for form submission
+          modal.data('problem-code', data.problem_code);
+
+      // Show modal and prevent body scrolling
+          $('body').css('overflow', 'hidden');
+          modal.addClass('show');
+        }
+
+    // Function to apply suggestions
+        $('#apply-suggestions').on('click', function () {
+          const modal = $('#suggestion-modal');
+          const problemCode = modal.data('problem-code');
+          const points = $('#suggested-points').val();
+          const types = $('#suggested-types').val() || [];
+
+          const button = $(this);
+          const originalText = button.text();
+
+          button.prop('disabled', true).text('{{_("Applying...")}}');
+
+      // Build form data properly for multiple select
+          const formData = new FormData();
+          formData.append('problem_code', problemCode);
+          formData.append('csrfmiddlewaretoken', $('[name=csrfmiddlewaretoken]').val());
+
+          if (points) {
+            formData.append('points', points);
+          }
+
+      // Append each type ID separately for Django's getlist() to work
+          types.forEach(function (typeId) {
+            formData.append('types', typeId);
+          });
+
+          $.ajax({
+            url: "{{url('internal_problem_tag')}}",
+            type: "POST",
+            data: formData,
+            processData: false,
+            contentType: false,
+            success: function (response) {
+              if (response.success) {
+                $('body').css('overflow', 'auto');
+                modal.removeClass('show');
+                location.reload();
+              } else {
+                alert('{{_("Problem tagging failed: ")}}' + (response.error || 'Unknown error occurred'));
+              }
+            },
+            error: function () {
+              alert('{{_("Problem tagging failed: Network error occurred - please try again later")}}');
+            },
+            complete: function () {
+              button.prop('disabled', false).text(originalText);
+            }
+          });
+        });
+
+    // Improve Markdown functionality
+        function pollMarkdownTask(taskId, button, originalText, problemCode) {
+          var pollCount = 0;
+          var maxPolls = 90; // 3 minutes at 2s intervals
+          var pollInterval = setInterval(function() {
+            pollCount++;
+            if (pollCount > maxPolls) {
+              clearInterval(pollInterval);
+              button.prop('disabled', false);
+              button.html(originalText);
+              alert('{{_("Task timed out. Please try again.")}}');
+              return;
+            }
+            $.ajax({
+              url: '{{ url('task_status_ajax') }}?id=' + taskId,
+              type: 'GET',
+              success: function(data) {
+                if (data.code === 'SUCCESS') {
+                  clearInterval(pollInterval);
+                  button.prop('disabled', false);
+                  button.html(originalText);
+
+                  if (data.success && data.improved_markdown) {
+                    showMarkdownModal(problemCode, data.improved_markdown);
+                  } else {
+                    alert(data.error || '{{_("No improvements needed")}}');
+                  }
+                } else if (data.code === 'FAILURE') {
+                  clearInterval(pollInterval);
+                  button.prop('disabled', false);
+                  button.html(originalText);
+                  alert('{{_("Markdown improvement failed")}}');
+                }
+              },
+              error: function() {
+                clearInterval(pollInterval);
+                button.prop('disabled', false);
+                button.html(originalText);
+                alert('{{_("Network error occurred")}}');
+              }
+            });
+          }, 2000);
+        }
+
+        $(".improve-markdown-button").on("click", function () {
+          const button = $(this);
+          const problemCode = button.data("problem-code");
+          const originalText = button.html();
+
+          button.prop('disabled', true);
+          button.html('<i class="fa fa-spinner fa-spin"></i> {{_("Improving...")}}');
+
+          $.ajax({
+            url: "{{url('internal_improve_markdown')}}",
+            type: "GET",
+            data: { problem_code: problemCode },
+            success: function (response) {
+              if (response.success && response.task_id) {
+                pollMarkdownTask(response.task_id, button, originalText, problemCode);
+              } else {
+                button.prop('disabled', false);
+                button.html(originalText);
+                alert(response.error || '{{_("An error occurred.")}}');
+              }
+            },
+            error: function () {
+              button.prop('disabled', false);
+              button.html(originalText);
+              alert('{{_("Network error occurred")}}');
+            }
+          });
+        });
+
+        function showMarkdownModal(problemCode, improvedMarkdown) {
+          const modal = $('#markdown-modal');
+          modal.data('problem-code', problemCode);
+          $('#markdown-preview-content').val(improvedMarkdown);
+          // Reset to source tab
+          $('#markdown-tab-source').addClass('active');
+          $('#markdown-tab-preview').removeClass('active');
+          $('#markdown-source-pane').show();
+          $('#markdown-rendered-pane').hide().html('');
+          $('body').css('overflow', 'hidden');
+          modal.addClass('show');
+        }
+
+    // Markdown modal tab switching
+        $('#markdown-tab-source').on('click', function () {
+          $(this).addClass('active');
+          $('#markdown-tab-preview').removeClass('active');
+          $('#markdown-source-pane').show();
+          $('#markdown-rendered-pane').hide();
+        });
+
+        $('#markdown-tab-preview').on('click', function () {
+          $(this).addClass('active');
+          $('#markdown-tab-source').removeClass('active');
+          $('#markdown-source-pane').hide();
+          var $rendered = $('#markdown-rendered-pane');
+          $rendered.show().html('<i class="fa fa-spinner fa-spin"></i> {{_("Loading preview...")}}');
+
+          $.post('{{ url("problem_preview") }}', {
+            preview: $('#markdown-preview-content').val(),
+            csrfmiddlewaretoken: $.cookie('csrftoken')
+          }, function (result) {
+            $rendered.html(result);
+            if (window.renderKatex) {
+              renderKatex($rendered[0]);
+            }
+          }).fail(function () {
+            $rendered.html('<span class="red">{{_("Failed to load preview")}}</span>');
+          });
+        });
+
+        $('#apply-markdown').on('click', function () {
+          const modal = $('#markdown-modal');
+          const problemCode = modal.data('problem-code');
+          const improvedMarkdown = $('#markdown-preview-content').val();
+          const button = $(this);
+
+          button.prop('disabled', true).text('{{_("Applying...")}}');
+          $.ajax({
+            url: "{{url('internal_improve_markdown')}}",
+            type: "POST",
+            data: {
+              problem_code: problemCode,
+              improved_markdown: improvedMarkdown,
+              csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').val()
+            },
+            success: function (response) {
+              if (response.success) {
+                $('body').css('overflow', 'auto');
+                modal.removeClass('show');
+                location.reload();
+              } else {
+                alert(response.error || '{{_("An error occurred.")}}');
+              }
+            },
+            error: function () {
+              alert('{{_("Network error occurred")}}');
+            },
+            complete: function () {
+              button.prop('disabled', false).text('{{_("Apply")}}');
+            },
+          });
+        });
+
+    // Close modal functionality
+        $('.close, .cancel-modal').on('click', function () {
+          $('body').css('overflow', 'auto');
+          $(this).closest('.suggestion-modal').removeClass('show');
+        });
+
+    // Close modal when clicking outside
+        $(window).on('click', function (event) {
+          $('.suggestion-modal.show').each(function () {
+            if (event.target === this) {
+              $('body').css('overflow', 'auto');
+              $(this).removeClass('show');
+            }
+          });
+        });
+      });
+    </script>
+  {% endcompress %}
+{% endblock %}
+
+{% block left_sidebar %}
+  {% include "internal/left-sidebar.html" %}
+{% endblock %}
+
+{% block middle_content %}
+  {% csrf_token %}
+
+<!-- Queue Tabs -->
+  <div class="queue-tabs">
+    <a class="queue-tab {% if current_tab == 'public' %}active{% endif %}"
+       href="{{ url('internal_problem_queue') }}">
+      {{ _('Public Queue') }}
+    </a>
+    <a class="queue-tab {% if current_tab == 'request_public' %}active{% endif %}"
+       href="{{ url('internal_problem_queue') }}?tab=request_public">
+      {{ _('Request Public') }}
+      {% if pending_request_count %}
+        <span class="badge background-red white">{{ pending_request_count }}</span>
+      {% endif %}
+    </a>
+  </div>
+
+  {% if current_tab == 'request_public' %}
+<!-- Status Filters for Request Public tab -->
+    <div class="status-filters">
+      <a class="status-filter action-btn {% if not status_filter %}background-gray{% endif %}"
+         href="{{ url('internal_problem_queue') }}?tab=request_public">{{ _('All') }}</a>
+      <a class="status-filter action-btn {% if status_filter == 'P' %}background-gray{% endif %}"
+         href="{{ url('internal_problem_queue') }}?tab=request_public&status=P">{{ _('Pending') }}</a>
+      <a class="status-filter action-btn {% if status_filter == 'A' %}background-gray{% endif %}"
+         href="{{ url('internal_problem_queue') }}?tab=request_public&status=A">{{ _('Approved') }}</a>
+      <a class="status-filter action-btn {% if status_filter == 'R' %}background-gray{% endif %}"
+         href="{{ url('internal_problem_queue') }}?tab=request_public&status=R">{{ _('Rejected') }}</a>
+    </div>
+  {% endif %}
+
+<!-- Problem Filter Section -->
+  <div class="sidebox compact-filter">
+    <h3 class="colored-text"><i class="fa fa-search"></i>{{ _('Problem search') }}</h3>
+    <div class="sidebox-content">
+      <form id="filter-form" name="form" action="" method="get">
+        {% if current_tab == 'request_public' %}
+          <input type="hidden" name="tab" value="request_public">
+          {% if status_filter %}
+            <input type="hidden" name="status" value="{{ status_filter }}">
+          {% endif %}
+        {% endif %}
+        <div>
+          <input id="search" type="text" name="search" value="{{ search_query or '' }}"
+                 placeholder="{{ _('Search problems...') }}">
+        </div>
+
+        <div class="filter-form-group">
+          <label class="bold-text margin-label" for="search-author"><i class="non-italics">{{ _('Author') }}</i></label>
+          <select id="search-author" name="authors" multiple>
+            {% for author in author_query %}
+              <option value="{{ author.id }}" selected>
+                {{ author.username }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        {% if point_values %}
+          <div class="filter-form-group">
+            <div class="bold-text margin-label">{{ _('Point range') }}</div>
+            <div id="point-slider"></div>
+          </div>
+        {% endif %}
+
+        <input id="point-start" type="hidden" name="point_start" {% if point_start and point_start !=point_values.min
+               %}value="{{ point_start }}" {% else %}disabled{% endif %}>
+<input id="point-end" type="hidden" name="point_end" {% if point_end and point_end !=point_values.max
+       %}value="{{ point_end }}" {% else %}disabled{% endif %}>
+
+<div class="form-submit-group">
+  <div id="go" class="action-btn">{{ _('Go') }}</div>
+  {% if search_query or author_query or (point_start and point_start != point_values.min) or (point_end and
+  point_end != point_values.max) %}
+  <a href="{{ request.path }}{% if current_tab == 'request_public' %}?tab=request_public{% endif %}" class="action-btn background-gray">{{ _('Clear') }}</a>
+  {% endif %}
+</div>
+</form>
+</div>
+</div>
+
+{% if page_obj.num_pages > 1 %}
+  <div style="margin-top:10px;">{% include "list-pages.html" %}</div>
+  <br>
+{% endif %}
+{% for problem in problems %}
+  <div class="problem-container" style="display: flex; gap: 1em;">
+    <div class="blog-box" style="width: 100%">
+      <h3 class="problem-feed-name">
+        <a href="{{ url('problem_detail', problem.code) }}">
+          {{ problem.name }}
+        </a>
+      </h3>
+      {% with authors=problem.get_authors() %}
+        {% if authors %}
+          <div class="problem-feed-info-entry">
+            <i class="far fa-pen-to-square"></i>
+            <span class="pi-value">{{ link_users(authors) }}</span>
+          </div>
+        {% endif %}
+      {% endwith %}
+      <div class="problem-feed-types">
+        <i class="fa fa-tag"></i>
+        {% for type in problem.get_types_name() %}
+          <span class="type-tag">{{ type }}</span>{% if not loop.last %}, {% endif %}
+        {% endfor %}, *{{problem.points | int}}
+      </div>
+
+      {% if current_tab == 'request_public' %}
+        {% set pr = problem.public_request %}
+        {% if pr %}
+          <div class="request-info">
+            <span class="request-status {{ 'blue' if pr.status == 'P' else ('green' if pr.status == 'A' else 'red') }}">
+              {{ pr.get_status_display() }}
+            </span>
+            &middot; {{ _('Requested by') }} {{ link_user(pr.requested_by) }}
+            <span class="gray">{{ pr.created_at | date(_("N j, Y, g:i a")) }}</span>
+            {% if pr.reviewed_by %}
+              &middot; {{ _('Reviewed by') }} {{ link_user(pr.reviewed_by) }}
+            {% endif %}
+          </div>
+          {% if pr.feedback %}
+            <div class="feedback-box red">
+              <i class="fa fa-comment"></i> {{ pr.feedback }}
+            </div>
+          {% endif %}
+        {% endif %}
+      {% endif %}
+
+      <div class="blog-description">
+        <div class='content-description'>
+          {{ problem.description|markdown(lazy_load=True)|reference|str|safe }}
+          {% if problem.pdf_description %}
+            <embed src="{{url('problem_pdf_description', problem.code)}}" width="100%" height="500" type="application/pdf"
+                   style="margin-top: 0.5em">
+          {% endif %}
+        </div>
+        <div class="show-more"> {{_("...More")}} </div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 0.5em; min-width: fit-content;">
+      {% if current_tab == 'public' %}
+        <button class="mark-private-button action-btn" data-problem-id="{{ problem.id }}">
+          <i class="fa fa-eye-slash"></i> {{_("Mark private")}}
+        </button>
+        {% if request.user.is_superuser %}
+          <button class="problem-tag-button action-btn" data-problem-code="{{ problem.code }}">
+            <i class="fa fa-magic"></i> {{_("Problem Tag")}}
+          </button>
+          <button class="improve-markdown-button action-btn" data-problem-code="{{ problem.code }}">
+            <i class="fa fa-magic"></i> {{_("Improve Markdown")}}
+          </button>
+        {% endif %}
+      {% elif current_tab == 'request_public' %}
+        {% set pr = problem.public_request %}
+        {% if (not problem.is_public or problem.is_organization_private) and pr and pr.status != 'A' %}
+          <button class="publish-button action-btn" data-problem-id="{{ problem.id }}">
+            <i class="fa fa-globe"></i> {{_("Publish")}}
+          </button>
+        {% endif %}
+        {% if pr and pr.status == 'P' %}
+          <button class="reject-button action-btn background-red white" data-problem-id="{{ problem.id }}" data-problem-name="{{ problem.name }}">
+            <i class="fa fa-times"></i> {{_("Reject")}}
+          </button>
+        {% endif %}
+        <button class="improve-markdown-button action-btn" data-problem-code="{{ problem.code }}">
+          <i class="fa fa-magic"></i> {{_("Improve Markdown")}}
+        </button>
+        <button class="problem-tag-button action-btn" data-problem-code="{{ problem.code }}">
+          <i class="fa fa-tag"></i> {{_("Problem Tag")}}
+        </button>
+      {% endif %}
+    </div>
+  </div>
+{% endfor %}
+{% if page_obj.num_pages > 1 %}
+  <div style="margin-top:10px;">{% include "list-pages.html" %}</div>
+{% endif %}
+
+<!-- Suggestion Modal (Problem Tag) -->
+<div id="suggestion-modal" class="suggestion-modal">
+  <div class="suggestion-modal-content">
+    <div class="suggestion-modal-header">
+      <h3 id="modal-title">{{_("Suggestion Tag")}}</h3>
+      <span class="close">&times;</span>
+    </div>
+
+    <!-- Success Content -->
+    <div id="success-content">
+      <div id="success-info" class="alert alert-info">
+        <p><strong>{{_("AI Analysis Results")}}</strong></p>
+        <p>{{_("Review and modify the AI suggestions before applying them to the problem.")}}</p>
+      </div>
+
+      <form id="suggestion-form">
+        <div class="form-group">
+          <label for="suggested-points">{{_("Points")}}</label>
+          <input type="number" id="suggested-points" min="1" max="1000" step="1">
+          <div id="points-predicted" class="predicted-badge" style="display: none;"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="suggested-types">{{_("Problem Types")}}</label>
+          <select id="suggested-types" multiple="multiple">
+          </select>
+          <div id="types-predicted" class="predicted-badge" style="display: none;"></div>
+        </div>
+      </form>
+    </div>
+
+    <div class="suggestion-actions">
+      <button type="button" class="action-btn background-gray cancel-modal">{{_("Cancel")}}</button>
+      <button type="button" class="action-btn" id="apply-suggestions">{{_("Apply Changes")}}</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reject Modal -->
+<div id="reject-modal" class="suggestion-modal">
+  <div class="suggestion-modal-content">
+    <div class="suggestion-modal-header">
+      <h3 id="reject-modal-title">{{_("Reject")}}</h3>
+      <span class="close">&times;</span>
+    </div>
+
+    <div style="padding: 1em;">
+      <div class="form-group">
+        <label for="reject-feedback"><b>{{_("Feedback for the author")}}</b></label>
+        <textarea id="reject-feedback" rows="4" style="width: 100%; margin-top: 0.5em; padding: 0.5em;"
+                  placeholder="{{_('Explain why this request is being rejected...')}}"></textarea>
+      </div>
+    </div>
+
+    <div class="suggestion-actions">
+      <button type="button" class="action-btn background-gray cancel-modal">{{_("Cancel")}}</button>
+      <button type="button" class="action-btn background-red white" id="submit-reject">{{_("Reject")}}</button>
+    </div>
+  </div>
+</div>
+
+<!-- Improve Markdown Preview Modal -->
+<div id="markdown-modal" class="suggestion-modal">
+  <div class="suggestion-modal-content" style="max-width: 800px;">
+    <div class="suggestion-modal-header">
+      <h3>{{_("Improved Markdown Preview")}}</h3>
+      <span class="close">&times;</span>
+    </div>
+
+    <div style="padding: 0 1em;">
+      <div class="queue-tabs" style="margin-bottom: 0;">
+        <a class="queue-tab active" id="markdown-tab-source" href="javascript:void(0)">{{_("Source")}}</a>
+        <a class="queue-tab" id="markdown-tab-preview" href="javascript:void(0)">{{_("Preview")}}</a>
+      </div>
+    </div>
+
+    <div style="padding: 0 1em 1em;">
+      <div id="markdown-source-pane">
+        <textarea id="markdown-preview-content" style="width: 100%; min-height: 400px; font-family: monospace; font-size: 13px; padding: 10px; resize: vertical;"></textarea>
+      </div>
+      <div id="markdown-rendered-pane" class="content-description" style="display: none; min-height: 400px; max-height: 600px; overflow-y: auto; padding: 10px;">
+      </div>
+    </div>
+
+    <div class="suggestion-actions">
+      <button type="button" class="action-btn background-gray cancel-modal">{{_("Cancel")}}</button>
+      <button type="button" class="action-btn" id="apply-markdown">{{_("Apply")}}</button>
+    </div>
+  </div>
+</div>
+{% endblock %}

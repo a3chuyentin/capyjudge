@@ -1,0 +1,47 @@
+{% extends "three-column-content.html" %}
+{% block three_col_media %}
+  {% include "blog/media-css.html" %}
+  <style>
+    .no-clarifications-message {
+      font-style: italic;
+      text-align: center;
+    }
+
+    .org-logo {
+      height: 2em;
+      width: 2em;
+      margin-right: 0.5em;
+    }
+
+    .organization-row:last-child {
+      border-bottom: none;
+    }
+  </style>
+{% endblock %}
+
+{% block js_media %}
+  {% include "comments/editor-libs-js.html" %}
+  {% include "actionbar/media-js.html" %}
+  {% include "feed/feed_js.html" %}
+  <script type="text/javascript">
+    $(document).ready(function () {
+      $('.time-remaining').each(function () {
+        count_down($(this));
+      });
+    });
+  </script>
+{% endblock %}
+
+{% block left_sidebar %}{% endblock %}
+
+{% block middle_content %}
+  {% include "blog/content.html" %}
+{% endblock %}
+
+{% block right_sidebar %}
+  <div class="right-sidebar">
+    {% include 'profile-table.html' %}
+    {% include 'contests-countdown.html' %}
+    {% include 'top-users.html' %}
+  </div>
+{% endblock %}

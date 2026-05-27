@@ -1,0 +1,28 @@
+{% for node in comment_list %}
+  {% with item=node %}
+    {% include "comments/comment-item.html" %}
+  {% endwith %}
+  <ul id="comment-{{ node.id }}-children" class="ul-comments">
+    {# Render highlighted path nested under its root #}
+    {% if highlighted_path and node.id == highlighted_root_id %}
+      {% with path=highlighted_path %}
+        {% include "comments/highlighted-path.html" %}
+      {% endwith %}
+    {% endif %}
+  </ul>
+{% endfor %}
+
+{% if comment_more > 0 %}
+  <a href="javascript:comment_show_more({{ comment_root_id }}, {{ offset }}, {{ target_comment }})" class="show_more_comment" data-sort-by="{{ sort_by }}" data-sort-order="{{ sort_order }}">
+    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-chevron-down" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+      <path d="M6 9l6 6l6 -6"></path>
+    </svg>
+    {{ comment_more }}
+    {% trans trimmed count=comment_more %}
+      more comment
+      {% pluralize count %}
+      more comments
+    {% endtrans %}
+  </a>
+{% endif %}

@@ -1,0 +1,23 @@
+{% extends "user/users-table.html" %}
+
+{% block before_point_head %}
+  {% if can_edit %}
+    <th class="header"></th>
+  {% endif %}
+{% endblock %}
+
+{% block before_point %}
+  {% if can_edit %}
+    <td>
+      {% if not organization.is_admin(user) %}
+        <form action="{{ kick_url }}" method="POST" class="kick-form">
+          {% csrf_token %}
+          <input type="hidden" name="user" value="{{ user.id }}">
+          <a href="#" class="action-btn small">{{ _('Kick') }}</a>
+        </form>
+      {% else %}
+        {{ _("Admin") }}
+      {% endif %}
+    </td>
+  {% endif %}
+{% endblock %}

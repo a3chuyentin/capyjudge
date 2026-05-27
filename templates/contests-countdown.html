@@ -1,0 +1,41 @@
+{% if current_contests %}
+  <div class="blog-sidebox sidebox">
+    <h3 class="bold-text colored-text"><i class="fa fa-ranking-star"></i> {{ _('Ongoing contests') }}</h3>
+    <div class="sidebox-content">
+      {% for contest in current_contests %}
+        <div class="contest">
+          <div class="contest-list-title">
+            <a href="{{ url('contest_view', contest.key) }}">{{ contest.name }}</a>
+          </div>
+          <div class="time">
+            {{ _('Ends in') }} {{ _('%(countdown)s.', countdown=contest.end_time|as_countdown) }}
+          </div>
+        </div>
+      {% endfor %}
+      <div style="text-align: center; padding: 0.4em;">
+        <a href="{{ url('contest_list') }}" style="font-size: 0.85em;">{{ _('View all') }} &rarr;</a>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+{% if future_contests %}
+  <div class="blog-sidebox sidebox">
+    <h3 class="bold-text colored-text"><i class="fa fa-ranking-star"></i>{{ _('Upcoming contests') }}</h3>
+    <div class="sidebox-content">
+      {% for contest in future_contests %}
+        <div class="contest">
+          <div class="contest-list-title">
+            <a href="{{ url('contest_view', contest.key) }}">{{ contest.name }}</a>
+          </div>
+          <div class="time">
+            {{ _('Starting in %(countdown)s.', countdown=contest.start_time|as_countdown) }}
+          </div>
+        </div>
+      {% endfor %}
+      <div style="text-align: center; padding: 0.4em;">
+        <a href="{{ url('contest_list') }}" style="font-size: 0.85em;">{{ _('View all') }} &rarr;</a>
+      </div>
+    </div>
+  </div>
+{% endif %}

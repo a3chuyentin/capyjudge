@@ -1,0 +1,6 @@
+{% for problem in problems %}
+  <div class="blog-box">
+    {% include "problem/feed/item.html" %}
+  </div>
+{% endfor %}
+{% include "feed/has_next.html" %}

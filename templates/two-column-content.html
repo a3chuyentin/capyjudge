@@ -1,0 +1,13 @@
+{% set is_two_column = true %}
+{% extends "three-column-content.html" %}
+
+{% block three_col_media %}
+  <style>
+    .middle-content {
+      min-width: 96%;
+      max-width: 96%;
+      margin-left: 2%;
+    }
+  </style>
+  {% block two_col_media %}{% endblock %}
+{% endblock %}

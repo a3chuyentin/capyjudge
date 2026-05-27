@@ -1,0 +1,2026 @@
+from django.conf import settings
+from django.urls import include, re_path, path
+from django.conf.urls.static import static as url_static
+from django.contrib import admin
+from django.contrib.auth import views as auth_views
+from django.contrib.auth.decorators import login_required
+from django.contrib.sitemaps.views import sitemap
+from django.http import Http404, HttpResponsePermanentRedirect
+from django.templatetags.static import static
+from django.urls import reverse
+from django.utils.translation import gettext_lazy as _
+from django.views.generic import RedirectView
+
+import chat_box.views as chat
+from judge import authentication
+from judge.forms import CustomAuthenticationForm
+from judge.sitemap import (
+    BlogPostSitemap,
+    ContestSitemap,
+    HomePageSitemap,
+    OrganizationSitemap,
+    ProblemSitemap,
+    SolutionSitemap,
+    UrlSitemap,
+    UserSitemap,
+)
+from judge.views import (
+    TitledTemplateView,
+    about,
+    api,
+    blog,
+    chatbot,
+    comment,
+    contests,
+    docs,
+    language,
+    license,
+    mailgun,
+    markdown_editor,
+    notification,
+    organization,
+    preview,
+    problem,
+    problem_manage,
+    ranked_submission,
+    register,
+    stats,
+    status,
+    submission,
+    semantic_search,
+    tasks,
+    ticket,
+    totp,
+    user,
+    pagevote,
+    bookmark,
+    widgets,
+    internal,
+    resolver,
+    course,
+    email,
+    custom_file_upload,
+    quiz,
+    theme,
+    direct_upload,
+)
+from judge.views import package_import
+from judge.views import quiz_import
+from judge.views.problem_attachment import (
+    attachment_delete,
+    attachment_download,
+    attachment_reorder,
+    attachment_update,
+    attachment_upload,
+    attachments_tab,
+)
+from judge.views.problem_data import (
+    ProblemDataView,
+    ProblemSubmissionDiff,
+    ProblemValidatorView,
+    problem_data_file,
+    problem_init_view,
+    ProblemZipUploadView,
+    ValidateTestCasesView,
+    ValidateTestCasesStatusView,
+    ProblemValidatorSaveView,
+    ProblemSolutionCodesView,
+    ProblemSolutionCodesSaveView,
+    ProblemSolutionCodesRunView,
+    ProblemSolutionCodesRunOneView,
+    ProblemSolutionCodesStatusView,
+    ProblemSolutionCodesGenerateView,
+    ProblemSolutionCodesGenerateStatusView,
+)
+from judge.views.register import ActivationView, RegistrationView
+from judge.views.select2 import (
+    AssigneeSelect2View,
+    ChatUserSearchSelect2View,
+    ContestSelect2View,
+    ContestUserSearchSelect2View,
+    OrganizationSelect2View,
+    ProblemSelect2View,
+    TicketUserSelect2View,
+    UserSearchSelect2View,
+    UserSelect2View,
+    ProblemAuthorSearchSelect2View,
+    QuizSelect2View,
+    QuizQuestionSelect2View,
+    QuizUserSearchSelect2View,
+    CourseLessonSelect2View,
+)
+
+admin.autodiscover()
+
+register_patterns = [
+    re_path(
+        r"^activate/complete/$",
+        TitledTemplateView.as_view(
+            template_name="registration/activation_complete.html",
+            title="Activation Successful!",
+        ),
+        name="registration_activation_complete",
+    ),
+    # Activation keys get matched by \w+ instead of the more specific
+    # [a-fA-F0-9]{40} because a bad activation key should still get to the view;
+    # that way it can return a sensible "invalid key" message instead of a
+    # confusing 404.
+    re_path(
+        r"^activate/(?P<activation_key>\w+)/$",
+        ActivationView.as_view(title=_("Activation key invalid")),
+        name="registration_activate",
+    ),
+    re_path(
+        r"^register/$",
+        RegistrationView.as_view(title=_("Register")),
+        name="registration_register",
+    ),
+    re_path(
+        r"^register/complete/$",
+        TitledTemplateView.as_view(
+            template_name="registration/registration_complete.html",
+            title=_("Registration Completed"),
+        ),
+        name="registration_complete",
+    ),
+    re_path(
+        r"^register/closed/$",
+        TitledTemplateView.as_view(
+            template_name="registration/registration_closed.html",
+            title=_("Registration not allowed"),
+        ),
+        name="registration_disallowed",
+    ),
+    re_path(
+        r"^login/$",
+        auth_views.LoginView.as_view(
+            template_name="registration/login.html",
+            extra_context={"title": _("Login")},
+            authentication_form=CustomAuthenticationForm,
+            redirect_authenticated_user=True,
+        ),
+        name="auth_login",
+    ),
+    re_path(r"^logout/$", user.UserLogoutView.as_view(), name="auth_logout"),
+    re_path(
+        r"^password/change/$",
+        authentication.CustomPasswordChangeView.as_view(),
+        name="password_change",
+    ),
+    re_path(
+        r"^password/change/done/$",
+        auth_views.PasswordChangeDoneView.as_view(
+            template_name="registration/password_change_done.html",
+        ),
+        name="password_change_done",
+    ),
+    re_path(
+        r"^password/reset/$",
+        email.RateLimitedPasswordResetView.as_view(
+            template_name="registration/password_reset.html",
+            html_email_template_name="registration/password_reset_email.html",
+            email_template_name="registration/password_reset_email.txt",
+        ),
+        name="password_reset",
+    ),
+    re_path(
+        r"^password/reset/confirm/(?P<uidb64>[0-9A-Za-z]+)-(?P<token>.+)/$",
+        auth_views.PasswordResetConfirmView.as_view(
+            template_name="registration/password_reset_confirm.html",
+        ),
+        name="password_reset_confirm",
+    ),
+    re_path(
+        r"^password/reset/complete/$",
+        auth_views.PasswordResetCompleteView.as_view(
+            template_name="registration/password_reset_complete.html",
+        ),
+        name="password_reset_complete",
+    ),
+    re_path(
+        r"^password/reset/done/$",
+        auth_views.PasswordResetDoneView.as_view(
+            template_name="registration/password_reset_done.html",
+        ),
+        name="password_reset_done",
+    ),
+    re_path(r"^email/change/$", email.email_change_view, name="email_change"),
+    re_path(
+        r"^email/change/verify/(?P<uidb64>[0-9A-Za-z]+)-(?P<token>.+)/$",
+        email.verify_email_view,
+        name="email_change_verify",
+    ),
+    re_path(
+        r"^email/change/pending$",
+        email.email_change_pending_view,
+        name="email_change_pending",
+    ),
+    re_path(r"^social/error/$", register.social_auth_error, name="social_auth_error"),
+    re_path(r"^2fa/$", totp.TOTPLoginView.as_view(), name="login_2fa"),
+    re_path(r"^2fa/enable/$", totp.TOTPEnableView.as_view(), name="enable_2fa"),
+    re_path(r"^2fa/disable/$", totp.TOTPDisableView.as_view(), name="disable_2fa"),
+]
+
+
+def exception(request):
+    if not request.user.is_superuser:
+        raise Http404()
+    raise RuntimeError("@Xyene asked me to cause this")
+
+
+def paged_list_view(view, name, **kwargs):
+    view_func = view.as_view(**kwargs)
+
+    return include(
+        [
+            re_path(r"^$", view_func, name=name),
+            re_path(r"^(?P<page>\d+)$", view_func, name=name),
+        ]
+    )
+
+
+urlpatterns = [
+    re_path("", include("pagedown.urls")),
+    re_path(
+        r"^$",
+        blog.PostList.as_view(template_name="home.html", title=_("Home")),
+        kwargs={"page": 1},
+        name="home",
+    ),
+    re_path(
+        r"^semantic_search$",
+        semantic_search.SemanticSearch.as_view(),
+        name="semantic_search",
+    ),
+    re_path(
+        r"^semantic_search/api$",
+        semantic_search.SemanticSearchApi.as_view(),
+        name="semantic_search_api",
+    ),
+    re_path(
+        r"^semantic_search/similar_api$",
+        semantic_search.SimilarProblemsApi.as_view(),
+        name="semantic_search_similar_api",
+    ),
+    re_path(r"^500/$", exception),
+    re_path(r"^toggle_darkmode/$", user.toggle_darkmode, name="toggle_darkmode"),
+    re_path(r"^admin/", admin.site.urls),
+    re_path(r"^i18n/", include("django.conf.urls.i18n")),
+    re_path(r"^accounts/", include(register_patterns)),
+    re_path(r"^", include("social_django.urls")),
+    re_path(r"^problems/", paged_list_view(problem.ProblemList, "problem_list")),
+    re_path(r"^problems/add/$", problem.ProblemAdd.as_view(), name="problem_add"),
+    re_path(
+        r"^problems/random/$", problem.RandomProblem.as_view(), name="problem_random"
+    ),
+    re_path(
+        r"^problems/feed/$",
+        problem.ProblemFeed.as_view(feed_type="for_you"),
+        name="problem_feed",
+    ),
+    re_path(
+        r"^problems/feed/new/$",
+        problem.ProblemFeed.as_view(feed_type="new"),
+        name="problem_feed_new",
+    ),
+    re_path(
+        r"^problem/(?P<problem>[^/]+)",
+        include(
+            [
+                re_path(r"^$", problem.ProblemDetail.as_view(), name="problem_detail"),
+                re_path(
+                    r"^/editorial$",
+                    problem.ProblemSolution.as_view(),
+                    name="problem_editorial",
+                ),
+                re_path(r"^/raw$", problem.ProblemRaw.as_view(), name="problem_raw"),
+                re_path(
+                    r"^/pdf$", problem.ProblemPdfView.as_view(), name="problem_pdf"
+                ),
+                re_path(
+                    r"^/pdf/(?P<language>[a-z-]+)$",
+                    problem.ProblemPdfView.as_view(),
+                    name="problem_pdf",
+                ),
+                re_path(
+                    r"^/pdf_description$",
+                    problem.ProblemPdfDescriptionView.as_view(),
+                    name="problem_pdf_description",
+                ),
+                re_path(
+                    r"^/clone", problem.ProblemClone.as_view(), name="problem_clone"
+                ),
+                re_path(r"^/edit$", problem.ProblemEdit.as_view(), name="problem_edit"),
+                re_path(r"^/log$", problem.ProblemLog.as_view(), name="problem_log"),
+                re_path(
+                    r"^/edit/language_limits$",
+                    problem.ProblemEditLanguageLimits.as_view(),
+                    name="problem_edit_language_limits",
+                ),
+                re_path(
+                    r"^/edit/language_templates$",
+                    problem.ProblemEditLanguageTemplates.as_view(),
+                    name="problem_edit_language_templates",
+                ),
+                re_path(
+                    r"^/edit/solutions$",
+                    problem.ProblemEditSolutions.as_view(),
+                    name="problem_edit_solutions",
+                ),
+                re_path(
+                    r"^/edit/translations$",
+                    problem.ProblemEditTranslations.as_view(),
+                    name="problem_edit_translations",
+                ),
+                re_path(
+                    r"^/chatbot$",
+                    chatbot.ProblemChatbotView.as_view(),
+                    name="problem_chatbot",
+                ),
+                re_path(
+                    r"^/chatbot/send$",
+                    chatbot.ChatbotSendMessage.as_view(),
+                    name="problem_chatbot_send",
+                ),
+                re_path(
+                    r"^/chatbot/clear$",
+                    chatbot.ChatbotClearHistory.as_view(),
+                    name="problem_chatbot_clear",
+                ),
+                re_path(
+                    r"^/chatbot/history$",
+                    chatbot.ChatbotGetHistory.as_view(),
+                    name="problem_chatbot_history",
+                ),
+                re_path(
+                    r"^/chatbot/model$",
+                    chatbot.ChatbotSetModel.as_view(),
+                    name="problem_chatbot_model",
+                ),
+                re_path(
+                    r"^/chatbot/delete$",
+                    chatbot.ChatbotDeleteMessage.as_view(),
+                    name="problem_chatbot_delete",
+                ),
+                re_path(
+                    r"^/import$",
+                    package_import.PackageImportView.as_view(),
+                    name="problem_package_import",
+                ),
+                re_path(
+                    r"^/import/upload$",
+                    package_import.PackageImportUploadView.as_view(),
+                    name="problem_package_import_upload",
+                ),
+                re_path(
+                    r"^/import/apply$",
+                    package_import.PackageImportApplyView.as_view(),
+                    name="problem_package_import_apply",
+                ),
+                re_path(
+                    r"^/import/file$",
+                    package_import.PackageImportFileView.as_view(),
+                    name="problem_package_import_file",
+                ),
+                re_path(r"^/submit$", problem.problem_submit, name="problem_submit"),
+                re_path(
+                    r"^/resubmit/(?P<submission>\d+)$",
+                    problem.problem_submit,
+                    name="problem_submit",
+                ),
+                re_path(
+                    r"^/rank/",
+                    paged_list_view(
+                        ranked_submission.RankedSubmissions, "ranked_submissions"
+                    ),
+                ),
+                re_path(
+                    r"^/submissions/",
+                    paged_list_view(
+                        submission.ProblemSubmissions, "chronological_submissions"
+                    ),
+                ),
+                re_path(
+                    r"^/submissions/(?P<user>\w+)/",
+                    paged_list_view(
+                        submission.UserProblemSubmissions, "user_submissions"
+                    ),
+                ),
+                re_path(
+                    r"^/$",
+                    lambda _, problem: HttpResponsePermanentRedirect(
+                        reverse("problem_detail", args=[problem])
+                    ),
+                ),
+                re_path(
+                    r"^/test_data$", ProblemDataView.as_view(), name="problem_data"
+                ),
+                re_path(
+                    r"^/test_data/init$", problem_init_view, name="problem_data_init"
+                ),
+                re_path(
+                    r"^/test_data/diff$",
+                    ProblemSubmissionDiff.as_view(),
+                    name="problem_submission_diff",
+                ),
+                re_path(
+                    r"^/test_data/upload$",
+                    ProblemZipUploadView.as_view(),
+                    name="problem_zip_upload",
+                ),
+                re_path(
+                    r"^/test_data/validator$",
+                    ProblemValidatorView.as_view(),
+                    name="problem_validator",
+                ),
+                re_path(
+                    r"^/test_data/validator/save$",
+                    ProblemValidatorSaveView.as_view(),
+                    name="problem_validator_save",
+                ),
+                re_path(
+                    r"^/test_data/validate$",
+                    ValidateTestCasesView.as_view(),
+                    name="problem_validate_testcases",
+                ),
+                re_path(
+                    r"^/test_data/validate/status$",
+                    ValidateTestCasesStatusView.as_view(),
+                    name="problem_validate_testcases_status",
+                ),
+                re_path(
+                    r"^/test_data/solution_codes$",
+                    ProblemSolutionCodesView.as_view(),
+                    name="problem_solution_codes",
+                ),
+                re_path(
+                    r"^/test_data/solution_codes/save$",
+                    ProblemSolutionCodesSaveView.as_view(),
+                    name="problem_solution_codes_save",
+                ),
+                re_path(
+                    r"^/test_data/solution_codes/run$",
+                    ProblemSolutionCodesRunView.as_view(),
+                    name="problem_solution_codes_run",
+                ),
+                re_path(
+                    r"^/test_data/solution_codes/run_one$",
+                    ProblemSolutionCodesRunOneView.as_view(),
+                    name="problem_solution_codes_run_one",
+                ),
+                re_path(
+                    r"^/test_data/solution_codes/status$",
+                    ProblemSolutionCodesStatusView.as_view(),
+                    name="problem_solution_codes_status",
+                ),
+                re_path(
+                    r"^/test_data/solution_codes/generate$",
+                    ProblemSolutionCodesGenerateView.as_view(),
+                    name="problem_solution_codes_generate",
+                ),
+                re_path(
+                    r"^/test_data/solution_codes/generate_status$",
+                    ProblemSolutionCodesGenerateStatusView.as_view(),
+                    name="problem_solution_codes_generate_status",
+                ),
+                re_path(
+                    r"^/data/(?P<path>.+)$", problem_data_file, name="problem_data_file"
+                ),
+                re_path(
+                    r"^/attachments$",
+                    attachments_tab,
+                    name="problem_attachments",
+                ),
+                re_path(
+                    r"^/attachments/upload$",
+                    attachment_upload,
+                    name="problem_attachment_upload",
+                ),
+                re_path(
+                    r"^/attachments/reorder$",
+                    attachment_reorder,
+                    name="problem_attachment_reorder",
+                ),
+                re_path(
+                    r"^/attachments/(?P<attachment_id>\d+)/delete$",
+                    attachment_delete,
+                    name="problem_attachment_delete",
+                ),
+                re_path(
+                    r"^/attachments/(?P<attachment_id>\d+)/update$",
+                    attachment_update,
+                    name="problem_attachment_update",
+                ),
+                re_path(
+                    r"^/attachments/(?P<attachment_id>\d+)$",
+                    attachment_download,
+                    name="problem_attachment_download",
+                ),
+                re_path(
+                    r"^/tickets$",
+                    ticket.ProblemTicketListView.as_view(),
+                    name="problem_ticket_list",
+                ),
+                re_path(
+                    r"^/tickets/new$",
+                    ticket.NewProblemTicketView.as_view(),
+                    name="new_problem_ticket",
+                ),
+                re_path(
+                    r"^/manage/submission",
+                    include(
+                        [
+                            re_path(
+                                "^$",
+                                problem_manage.ManageProblemSubmissionView.as_view(),
+                                name="problem_manage_submissions",
+                            ),
+                            re_path(
+                                "^/action$",
+                                problem_manage.ActionSubmissionsView.as_view(),
+                                name="problem_submissions_action",
+                            ),
+                            re_path(
+                                "^/action/preview$",
+                                problem_manage.PreviewActionSubmissionsView.as_view(),
+                                name="problem_submissions_rejudge_preview",
+                            ),
+                            re_path(
+                                "^/rejudge/success/(?P<task_id>[A-Za-z0-9-]*)$",
+                                problem_manage.rejudge_success,
+                                name="problem_submissions_rejudge_success",
+                            ),
+                            re_path(
+                                "^/rescore/all$",
+                                problem_manage.RescoreAllSubmissionsView.as_view(),
+                                name="problem_submissions_rescore_all",
+                            ),
+                            re_path(
+                                "^/rescore/success/(?P<task_id>[A-Za-z0-9-]*)$",
+                                problem_manage.rescore_success,
+                                name="problem_submissions_rescore_success",
+                            ),
+                        ]
+                    ),
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^submissions/", paged_list_view(submission.AllSubmissions, "all_submissions")
+    ),
+    re_path(
+        r"^submissions/user/(?P<user>\w+)/",
+        paged_list_view(submission.AllUserSubmissions, "all_user_submissions"),
+    ),
+    re_path(
+        r"^submissions/friends/",
+        paged_list_view(submission.AllFriendSubmissions, "all_friend_submissions"),
+    ),
+    re_path(
+        r"^src/(?P<submission>\d+)/raw$",
+        submission.SubmissionSourceRaw.as_view(),
+        name="submission_source_raw",
+    ),
+    re_path(
+        r"^submission/(?P<submission>\d+)",
+        include(
+            [
+                re_path(
+                    r"^$",
+                    submission.SubmissionStatus.as_view(),
+                    name="submission_status",
+                ),
+                re_path(
+                    r"^/abort$", submission.abort_submission, name="submission_abort"
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^markdown_editor/",
+        markdown_editor.MarkdownEditor.as_view(),
+        name="markdown_editor",
+    ),
+    re_path(
+        r"^submission_source_file/(?P<filename>(\w|\.)+)",
+        submission.SubmissionSourceFileView.as_view(),
+        name="submission_source_file",
+    ),
+    re_path(
+        r"^users/",
+        include(
+            [
+                re_path(r"^$", user.users, name="user_list"),
+                re_path(
+                    r"^(?P<page>\d+)$",
+                    lambda request, page: HttpResponsePermanentRedirect(
+                        "%s?page=%s" % (reverse("user_list"), page)
+                    ),
+                ),
+                re_path(
+                    r"^find$", user.user_ranking_redirect, name="user_ranking_redirect"
+                ),
+            ]
+        ),
+    ),
+    re_path(r"^user$", user.UserAboutPage.as_view(), name="user_page"),
+    re_path(r"^edit/profile/$", user.edit_profile, name="user_edit_profile"),
+    re_path(r"^theme/$", theme.ThemeSettingsView.as_view(), name="theme_settings"),
+    re_path(
+        r"^theme/toggle-darkmode/$",
+        theme.toggle_darkmode_ajax,
+        name="toggle_darkmode_ajax",
+    ),
+    re_path(
+        r"^theme/upload-sample/$",
+        theme.SampleBackgroundUploadView.as_view(),
+        name="upload_sample_background",
+    ),
+    re_path(
+        r"^theme/delete-sample/$",
+        theme.SampleBackgroundDeleteView.as_view(),
+        name="delete_sample_background",
+    ),
+    re_path(r"^user/bookmarks", user.UserBookMarkPage.as_view(), name="user_bookmark"),
+    re_path(
+        r"^user/(?P<user>\w+)",
+        include(
+            [
+                re_path(r"^$", user.UserAboutPage.as_view(), name="user_page"),
+                re_path(
+                    r"^/solved",
+                    include(
+                        [
+                            re_path(
+                                r"^$",
+                                user.UserProblemsPage.as_view(),
+                                name="user_problems",
+                            ),
+                            re_path(
+                                r"/ajax$",
+                                user.UserPerformancePointsAjax.as_view(),
+                                name="user_pp_ajax",
+                            ),
+                        ]
+                    ),
+                ),
+                re_path(
+                    r"^/submissions/",
+                    paged_list_view(
+                        submission.AllUserSubmissions, "all_user_submissions_old"
+                    ),
+                ),
+                re_path(
+                    r"^/submissions/",
+                    lambda _, user: HttpResponsePermanentRedirect(
+                        reverse("all_user_submissions", args=[user])
+                    ),
+                ),
+                re_path(
+                    r"^/toggle_follow/", user.toggle_follow, name="user_toggle_follow"
+                ),
+                re_path(
+                    r"^/$",
+                    lambda _, user: HttpResponsePermanentRedirect(
+                        reverse("user_page", args=[user])
+                    ),
+                ),
+            ]
+        ),
+    ),
+    re_path(r"^pagevotes/vote/$", pagevote.vote_page, name="pagevote_vote"),
+    re_path(r"^bookmarks/dobookmark/$", bookmark.dobookmark_page, name="dobookmark"),
+    re_path(
+        r"^bookmarks/undobookmark/$", bookmark.undobookmark_page, name="undobookmark"
+    ),
+    re_path(r"^comments/upvote/$", comment.upvote_comment, name="comment_upvote"),
+    re_path(r"^comments/downvote/$", comment.downvote_comment, name="comment_downvote"),
+    re_path(r"^comments/hide/$", comment.comment_hide, name="comment_hide"),
+    re_path(r"^comments/post/$", comment.post_comment, name="comment_post"),
+    re_path(
+        r"^comments/get_comments/$",
+        comment.TopLevelCommentsView.as_view(),
+        name="get_comments",
+    ),
+    re_path(
+        r"^comments/get_replies/$",
+        comment.RepliesView.as_view(),
+        name="comment_get_replies",
+    ),
+    re_path(
+        r"^comments/(?P<id>\d+)/",
+        include(
+            [
+                re_path(r"^edit$", comment.CommentEdit.as_view(), name="comment_edit"),
+                re_path(
+                    r"^history/ajax$",
+                    comment.CommentRevisionAjax.as_view(),
+                    name="comment_revision_ajax",
+                ),
+                re_path(
+                    r"^edit/ajax$",
+                    comment.CommentEditAjax.as_view(),
+                    name="comment_edit_ajax",
+                ),
+                re_path(
+                    r"^votes/ajax$",
+                    comment.CommentVotesAjax.as_view(),
+                    name="comment_votes_ajax",
+                ),
+                re_path(
+                    r"^render$",
+                    comment.CommentContent.as_view(),
+                    name="comment_content",
+                ),
+            ]
+        ),
+    ),
+    re_path(r"^contests/", paged_list_view(contests.ContestList, "contest_list")),
+    re_path(
+        r"^contests/summary/(?P<key>\w+)/",
+        paged_list_view(contests.ContestsSummaryView, "contests_summary"),
+    ),
+    re_path(
+        r"^contests/official",
+        paged_list_view(contests.OfficialContestList, "official_contest_list"),
+    ),
+    re_path(
+        r"^contests/recommended",
+        paged_list_view(contests.RecommendedContestList, "recommended_contest_list"),
+    ),
+    re_path(r"^courses/", paged_list_view(course.CourseList, "course_list")),
+    re_path(r"^courses/add/$", course.CourseAdd.as_view(), name="course_add"),
+    re_path(
+        r"^course/(?P<slug>[\w-]*)",
+        include(
+            [
+                re_path(r"^$", course.CourseDetail.as_view(), name="course_detail"),
+                re_path(
+                    r"^/$",
+                    lambda _, slug: HttpResponsePermanentRedirect(
+                        reverse("course_detail", args=[slug])
+                    ),
+                ),
+                re_path(
+                    r"^/join$",
+                    course.CourseJoin.as_view(),
+                    name="course_join",
+                ),
+                re_path(
+                    r"^/leave$",
+                    course.CourseLeave.as_view(),
+                    name="course_leave",
+                ),
+                re_path(
+                    r"^/lesson/(?P<id>\d+)$",
+                    course.CourseLessonDetail.as_view(),
+                    name="course_lesson_detail",
+                ),
+                re_path(
+                    r"^/lesson/create$",
+                    course.CreateCourseLesson.as_view(),
+                    name="course_lesson_create",
+                ),
+                re_path(
+                    r"^/edit_lessons$",
+                    course.EditCourseLessonsView.as_view(),
+                    name="edit_course_lessons",
+                ),
+                re_path(
+                    r"^/edit_lessons_new/(?P<id>\d+)$",
+                    course.EditCourseLessonsViewNewWindow.as_view(),
+                    name="edit_course_lessons_new",
+                ),
+                re_path(
+                    r"^/grades$",
+                    course.CourseStudentResults.as_view(),
+                    name="course_grades",
+                ),
+                re_path(
+                    r"^/members$",
+                    course.CourseMembers.as_view(),
+                    name="course_members",
+                ),
+                re_path(
+                    r"^/members/remove$",
+                    course.CourseRemoveMember.as_view(),
+                    name="course_remove_member",
+                ),
+                re_path(
+                    r"^/members/update_role$",
+                    course.CourseUpdateMemberRole.as_view(),
+                    name="course_update_member_role",
+                ),
+                re_path(
+                    r"^/grades/lesson/(?P<id>\d+)$",
+                    course.CourseStudentResultsLesson.as_view(),
+                    name="course_grades_lesson",
+                ),
+                re_path(
+                    r"^/lesson/(?P<lesson_id>\d+)/clone$",
+                    course.LessonClone.as_view(),
+                    name="clone_course_lesson",
+                ),
+                # Lesson-scoped quiz student views
+                re_path(
+                    r"^/lesson/(?P<lesson_id>\d+)/quiz/(?P<code>[^/]+)$",
+                    quiz.LessonQuizDetail.as_view(),
+                    name="lesson_quiz_detail",
+                ),
+                re_path(
+                    r"^/lesson/(?P<lesson_id>\d+)/quiz/(?P<code>[^/]+)/start/$",
+                    quiz.LessonQuizStart.as_view(),
+                    name="lesson_quiz_start",
+                ),
+                re_path(
+                    r"^/lesson/(?P<lesson_id>\d+)/quiz/(?P<code>[^/]+)/take/(?P<attempt_id>\d+)/$",
+                    quiz.LessonQuizTake.as_view(),
+                    name="lesson_quiz_take",
+                ),
+                re_path(
+                    r"^/lesson/(?P<lesson_id>\d+)/quiz/(?P<code>[^/]+)/take/(?P<attempt_id>\d+)/save/$",
+                    quiz.LessonQuizSaveAnswer.as_view(),
+                    name="lesson_quiz_save_answer",
+                ),
+                re_path(
+                    r"^/lesson/(?P<lesson_id>\d+)/quiz/(?P<code>[^/]+)/take/(?P<attempt_id>\d+)/upload/$",
+                    quiz.LessonQuizUploadFile.as_view(),
+                    name="lesson_quiz_upload_file",
+                ),
+                re_path(
+                    r"^/lesson/(?P<lesson_id>\d+)/quiz/(?P<code>[^/]+)/submit/(?P<attempt_id>\d+)/$",
+                    quiz.LessonQuizSubmit.as_view(),
+                    name="lesson_quiz_submit",
+                ),
+                re_path(
+                    r"^/lesson/(?P<lesson_id>\d+)/quiz/(?P<code>[^/]+)/result/(?P<attempt_id>\d+)/$",
+                    quiz.LessonQuizResult.as_view(),
+                    name="lesson_quiz_result",
+                ),
+                re_path(
+                    r"^/lesson/(?P<lesson_id>\d+)/quiz/(?P<code>[^/]+)/attempts/$",
+                    quiz.LessonQuizAttemptList.as_view(),
+                    name="lesson_quiz_attempt_list",
+                ),
+                re_path(
+                    r"^/add_contest$",
+                    course.AddCourseContest.as_view(),
+                    name="add_course_contest",
+                ),
+                re_path(
+                    r"^/edit_contest/(?P<contest>\w+)$",
+                    course.CourseContestEditRedirect.as_view(),
+                    name="edit_course_contest",
+                ),
+                re_path(
+                    r"^/contests$",
+                    course.CourseContestList.as_view(),
+                    name="course_contest_list",
+                ),
+                re_path(
+                    r"^/edit$",
+                    course.CourseEdit.as_view(),
+                    name="course_edit",
+                ),
+                re_path(
+                    r"^/refresh-progress$",
+                    course.CourseRefreshProgress.as_view(),
+                    name="course_refresh_progress",
+                ),
+            ]
+        ),
+    ),
+    # Question Bank URLs (Teachers/TAs only)
+    re_path(
+        r"^quiz/questions/$", quiz.QuestionBankList.as_view(), name="question_bank_list"
+    ),
+    re_path(
+        r"^quiz/questions/create/$",
+        quiz.QuestionBankCreate.as_view(),
+        name="question_bank_create",
+    ),
+    re_path(
+        r"^quiz/questions/(?P<pk>\d+)/$",
+        quiz.QuestionBankDetail.as_view(),
+        name="question_bank_detail",
+    ),
+    re_path(
+        r"^quiz/questions/(?P<pk>\d+)/edit/$",
+        quiz.QuestionBankEdit.as_view(),
+        name="question_bank_edit",
+    ),
+    re_path(
+        r"^quiz/questions/(?P<pk>\d+)/delete/$",
+        quiz.QuestionBankDelete.as_view(),
+        name="question_bank_delete",
+    ),
+    # Quiz Management URLs (Teachers/TAs only)
+    re_path(r"^quiz/$", quiz.QuizList.as_view(), name="quiz_list"),
+    re_path(r"^quiz/create/$", quiz.QuizCreate.as_view(), name="quiz_create"),
+    re_path(
+        r"^quiz/validate-questions/$",
+        quiz.QuizValidateQuestions.as_view(),
+        name="quiz_validate_questions",
+    ),
+    # Quiz Import (superuser only) — must be before quiz/<code> catch-all
+    re_path(
+        r"^quiz/import/$",
+        quiz_import.QuizImportView.as_view(),
+        name="quiz_import",
+    ),
+    re_path(
+        r"^quiz/import/upload/$",
+        quiz_import.QuizImportUploadView.as_view(),
+        name="quiz_import_upload",
+    ),
+    re_path(
+        r"^quiz/import/create-question/$",
+        quiz_import.QuizImportCreateQuestionView.as_view(),
+        name="quiz_import_create_question",
+    ),
+    re_path(
+        r"^quiz/import/create-quiz/$",
+        quiz_import.QuizImportCreateQuizView.as_view(),
+        name="quiz_import_create_quiz",
+    ),
+    re_path(
+        r"^quiz/(?P<code>[^/]+)",
+        include(
+            [
+                # Student views
+                re_path(r"^$", quiz.QuizDetail.as_view(), name="quiz_detail"),
+                re_path(
+                    r"^/$",
+                    lambda _, code: HttpResponsePermanentRedirect(
+                        reverse("quiz_detail", args=[code])
+                    ),
+                ),
+                re_path(r"^/start/$", quiz.QuizStart.as_view(), name="quiz_start"),
+                re_path(
+                    r"^/take/(?P<attempt_id>\d+)/$",
+                    quiz.QuizTake.as_view(),
+                    name="quiz_take",
+                ),
+                re_path(
+                    r"^/take/(?P<attempt_id>\d+)/save/$",
+                    quiz.QuizSaveAnswer.as_view(),
+                    name="quiz_save_answer",
+                ),
+                re_path(
+                    r"^/take/(?P<attempt_id>\d+)/upload/$",
+                    quiz.QuizUploadFile.as_view(),
+                    name="quiz_upload_file",
+                ),
+                re_path(
+                    r"^/submit/(?P<attempt_id>\d+)/$",
+                    quiz.QuizSubmit.as_view(),
+                    name="quiz_submit",
+                ),
+                re_path(
+                    r"^/result/(?P<attempt_id>\d+)/$",
+                    quiz.QuizResult.as_view(),
+                    name="quiz_result",
+                ),
+                re_path(
+                    r"^/attempts/$",
+                    quiz.QuizAttemptList.as_view(),
+                    name="quiz_attempt_list",
+                ),
+                # Teacher views
+                re_path(r"^/edit/$", quiz.QuizEdit.as_view(), name="quiz_edit"),
+                re_path(
+                    r"^/regrade/$", quiz.QuizRegrade.as_view(), name="quiz_regrade"
+                ),
+                re_path(r"^/delete/$", quiz.QuizDelete.as_view(), name="quiz_delete"),
+                re_path(
+                    r"^/statistics/$",
+                    quiz.QuizStatistics.as_view(),
+                    name="quiz_statistics",
+                ),
+                re_path(
+                    r"^/grade/$", quiz.QuizGradingTab.as_view(), name="quiz_grade_tab"
+                ),
+                re_path(
+                    r"^/export-csv/$",
+                    quiz.QuizGradesExportCSV.as_view(),
+                    name="quiz_export_csv",
+                ),
+                re_path(
+                    r"^/question-analysis/$",
+                    quiz.QuizQuestionAnalysis.as_view(),
+                    name="quiz_question_analysis",
+                ),
+                re_path(
+                    r"^/add-question/$",
+                    quiz.QuizAddQuestion.as_view(),
+                    name="quiz_add_question",
+                ),
+                re_path(
+                    r"^/remove-question/$",
+                    quiz.QuizRemoveQuestion.as_view(),
+                    name="quiz_remove_question",
+                ),
+                re_path(
+                    r"^/reorder-questions/$",
+                    quiz.QuizReorderQuestions.as_view(),
+                    name="quiz_reorder_questions",
+                ),
+                re_path(
+                    r"^/update-points/$",
+                    quiz.QuizUpdatePoints.as_view(),
+                    name="quiz_update_points",
+                ),
+                re_path(
+                    r"^/search-questions/$",
+                    quiz.QuizSearchQuestions.as_view(),
+                    name="quiz_search_questions",
+                ),
+            ]
+        ),
+    ),
+    # Quiz file management
+    re_path(
+        r"^quiz/file/(?P<file_id>\d+)/delete/$",
+        quiz.QuizDeleteFile.as_view(),
+        name="quiz_delete_file",
+    ),
+    # Grading URLs (Teachers/TAs only)
+    re_path(
+        r"^grading/dashboard/$",
+        quiz.GradingDashboard.as_view(),
+        name="grading_dashboard",
+    ),
+    re_path(
+        r"^grading/attempt/(?P<attempt_id>\d+)/$",
+        quiz.AttemptGrade.as_view(),
+        name="attempt_grade",
+    ),
+    re_path(
+        r"^grading/answer/(?P<answer_id>\d+)/$",
+        quiz.AnswerGrade.as_view(),
+        name="answer_grade",
+    ),
+    # Course Lesson Quiz URLs
+    re_path(
+        r"^course/(?P<course_slug>[\w-]+)/lesson/(?P<lesson_id>\d+)/quiz/add/$",
+        quiz.CourseLessonQuizCreate.as_view(),
+        name="course_lesson_quiz_create",
+    ),
+    re_path(
+        r"^course/(?P<course_slug>[\w-]+)/lesson/(?P<lesson_id>\d+)/quiz/(?P<quiz_id>\d+)/edit/$",
+        quiz.CourseLessonQuizEdit.as_view(),
+        name="course_lesson_quiz_edit",
+    ),
+    re_path(
+        r"^course/(?P<course_slug>[\w-]+)/lesson/(?P<lesson_id>\d+)/quiz/(?P<quiz_id>\d+)/delete/$",
+        quiz.CourseLessonQuizDelete.as_view(),
+        name="course_lesson_quiz_delete",
+    ),
+    re_path(
+        r"^contests/(?P<year>\d+)/(?P<month>\d+)/$",
+        contests.ContestCalendar.as_view(),
+        name="contest_calendar",
+    ),
+    re_path(
+        r"^contests/tag/(?P<name>[a-z-]+)",
+        include(
+            [
+                re_path(r"^$", contests.ContestTagDetail.as_view(), name="contest_tag"),
+                re_path(
+                    r"^/ajax$",
+                    contests.ContestTagDetailAjax.as_view(),
+                    name="contest_tag_ajax",
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^contest/(?P<contest>\w+)",
+        include(
+            [
+                re_path(r"^$", contests.ContestDetail.as_view(), name="contest_view"),
+                re_path(
+                    r"^/edit$",
+                    contests.ContestEdit.as_view(),
+                    name="contest_edit",
+                ),
+                re_path(
+                    r"^/problems$",
+                    contests.ContestProblems.as_view(),
+                    name="contest_problems",
+                ),
+                re_path(
+                    r"^/moss$", contests.ContestMossView.as_view(), name="contest_moss"
+                ),
+                re_path(
+                    r"^/moss/delete$",
+                    contests.ContestMossDelete.as_view(),
+                    name="contest_moss_delete",
+                ),
+                re_path(
+                    r"^/clone$", contests.ContestClone.as_view(), name="contest_clone"
+                ),
+                re_path(
+                    r"^/ranking/$",
+                    contests.ContestRanking.as_view(),
+                    name="contest_ranking",
+                ),
+                re_path(
+                    r"^/final_ranking/$",
+                    contests.ContestFinalRanking.as_view(),
+                    name="contest_final_ranking",
+                ),
+                re_path(
+                    r"^/join$", contests.ContestJoin.as_view(), name="contest_join"
+                ),
+                re_path(
+                    r"^/leave$", contests.ContestLeave.as_view(), name="contest_leave"
+                ),
+                re_path(
+                    r"^/stats$", contests.ContestStats.as_view(), name="contest_stats"
+                ),
+                re_path(
+                    r"^/submissions/(?P<user>\w+)/(?P<problem>\w+)",
+                    paged_list_view(
+                        submission.UserContestSubmissions, "contest_user_submissions"
+                    ),
+                ),
+                re_path(
+                    r"^/submissions/(?P<participation>\d+)/(?P<problem>\w+)/ajax",
+                    paged_list_view(
+                        submission.UserContestSubmissionsAjax,
+                        "contest_user_submissions_ajax",
+                    ),
+                ),
+                re_path(
+                    r"^/quiz-attempts/(?P<participation_id>\d+)/(?P<quiz_id>\d+)/ajax$",
+                    quiz.ContestQuizAttemptsAjax.as_view(),
+                    name="contest_quiz_attempts_ajax",
+                ),
+                re_path(
+                    r"^/submissions",
+                    paged_list_view(
+                        submission.ContestSubmissions,
+                        "contest_submissions",
+                    ),
+                ),
+                re_path(
+                    r"^/participations$",
+                    contests.ContestParticipationList.as_view(),
+                    name="contest_participation_own",
+                ),
+                re_path(
+                    r"^/participations/(?P<user>\w+)$",
+                    contests.ContestParticipationList.as_view(),
+                    name="contest_participation",
+                ),
+                re_path(
+                    r"^/participation/disqualify$",
+                    contests.ContestParticipationDisqualify.as_view(),
+                    name="contest_participation_disqualify",
+                ),
+                re_path(
+                    r"^/participation/bulk-disqualify$",
+                    contests.ContestBulkDisqualify.as_view(),
+                    name="contest_bulk_disqualify",
+                ),
+                re_path(
+                    r"^/clarification$",
+                    contests.NewContestClarificationView.as_view(),
+                    name="new_contest_clarification",
+                ),
+                re_path(
+                    r"^/clarification/ajax$",
+                    contests.ContestClarificationAjax.as_view(),
+                    name="contest_clarification_ajax",
+                ),
+                re_path(
+                    r"^/problemset$",
+                    contests.ContestProblemset.as_view(),
+                    name="contest_problemset",
+                ),
+                re_path(
+                    r"^/$",
+                    lambda _, contest: HttpResponsePermanentRedirect(
+                        reverse("contest_view", args=[contest])
+                    ),
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^organizations/$",
+        organization.OrganizationList.as_view(),
+        name="organization_list",
+    ),
+    re_path(
+        r"^organizations/add/$",
+        organization.AddOrganization.as_view(),
+        name="organization_add",
+    ),
+    re_path(
+        r"^organization/(?P<pk>\d+)-(?P<slug>[\w-]*)",
+        include(
+            [
+                re_path(
+                    r"^$",
+                    organization.OrganizationHome.as_view(),
+                    name="organization_home",
+                ),
+                re_path(
+                    r"^/users/",
+                    paged_list_view(
+                        organization.OrganizationUsers,
+                        "organization_users",
+                    ),
+                ),
+                re_path(
+                    r"^/problems/",
+                    paged_list_view(
+                        organization.OrganizationProblems, "organization_problems"
+                    ),
+                ),
+                re_path(
+                    r"^/contests/",
+                    paged_list_view(
+                        organization.OrganizationContests, "organization_contests"
+                    ),
+                ),
+                re_path(
+                    r"^/contest/add",
+                    organization.AddOrganizationContest.as_view(),
+                    name="organization_contest_add",
+                ),
+                re_path(
+                    r"^/contest/edit/(?P<contest>\w+)",
+                    organization.OrganizationContestEditRedirect.as_view(),
+                    name="organization_contest_edit",
+                ),
+                re_path(
+                    r"^/submissions/",
+                    paged_list_view(
+                        organization.OrganizationSubmissions, "organization_submissions"
+                    ),
+                ),
+                re_path(
+                    r"^/join$",
+                    organization.JoinOrganization.as_view(),
+                    name="join_organization",
+                ),
+                re_path(
+                    r"^/leave$",
+                    organization.LeaveOrganization.as_view(),
+                    name="leave_organization",
+                ),
+                re_path(
+                    r"^/block$",
+                    organization.BlockOrganization.as_view(),
+                    name="block_organization",
+                ),
+                re_path(
+                    r"^/unblock$",
+                    organization.UnblockOrganization.as_view(),
+                    name="unblock_organization",
+                ),
+                re_path(
+                    r"^/edit$",
+                    organization.EditOrganization.as_view(),
+                    name="edit_organization",
+                ),
+                re_path(
+                    r"^/kick$",
+                    organization.KickUserWidgetView.as_view(),
+                    name="organization_user_kick",
+                ),
+                re_path(
+                    r"^/add_member$",
+                    organization.AddOrganizationMember.as_view(),
+                    name="add_organization_member",
+                ),
+                re_path(
+                    r"^/generate_invite$",
+                    organization.GenerateInviteLink.as_view(),
+                    name="organization_generate_invite",
+                ),
+                re_path(
+                    r"^/revoke_invite$",
+                    organization.RevokeInviteLink.as_view(),
+                    name="organization_revoke_invite",
+                ),
+                re_path(
+                    r"^/blog/add$",
+                    organization.AddOrganizationBlog.as_view(),
+                    name="add_organization_blog",
+                ),
+                re_path(
+                    r"^/blog/edit/(?P<blog_pk>\d+)$",
+                    organization.EditOrganizationBlog.as_view(),
+                    name="edit_organization_blog",
+                ),
+                re_path(
+                    r"^/blog/pending$",
+                    organization.PendingBlogs.as_view(),
+                    name="organization_pending_blogs",
+                ),
+                re_path(
+                    r"^/moderation-log$",
+                    organization.OrganizationModerationLogView.as_view(),
+                    name="organization_moderation_log",
+                ),
+                re_path(
+                    r"^/request$",
+                    organization.RequestJoinOrganization.as_view(),
+                    name="request_organization",
+                ),
+                re_path(
+                    r"^/request/(?P<rpk>\d+)$",
+                    organization.OrganizationRequestDetail.as_view(),
+                    name="request_organization_detail",
+                ),
+                re_path(
+                    r"^/requests/",
+                    include(
+                        [
+                            re_path(
+                                r"^pending$",
+                                organization.OrganizationRequestView.as_view(),
+                                name="organization_requests_pending",
+                            ),
+                            re_path(
+                                r"^log$",
+                                organization.OrganizationRequestLog.as_view(),
+                                name="organization_requests_log",
+                            ),
+                            re_path(
+                                r"^approved$",
+                                organization.OrganizationRequestLog.as_view(
+                                    states=("A",), tab="approved"
+                                ),
+                                name="organization_requests_approved",
+                            ),
+                            re_path(
+                                r"^rejected$",
+                                organization.OrganizationRequestLog.as_view(
+                                    states=("R",), tab="rejected"
+                                ),
+                                name="organization_requests_rejected",
+                            ),
+                        ]
+                    ),
+                ),
+                re_path(
+                    r"^/courses/$",
+                    organization.OrganizationCourses.as_view(),
+                    name="organization_courses",
+                ),
+                re_path(
+                    r"^/$",
+                    lambda _, pk, slug: HttpResponsePermanentRedirect(
+                        reverse("organization_home", args=[pk, slug])
+                    ),
+                ),
+            ]
+        ),
+    ),
+    re_path(r"^runtimes/$", language.LanguageList.as_view(), name="runtime_list"),
+    re_path(r"^runtimes/matrix/$", status.version_matrix, name="version_matrix"),
+    re_path(r"^status/$", status.status_all, name="status_all"),
+    re_path(
+        r"^api/",
+        include(
+            [
+                re_path(r"^contest/list$", api.api_v1_contest_list),
+                re_path(r"^contest/info/(\w+)$", api.api_v1_contest_detail),
+                re_path(r"^problem/list$", api.api_v1_problem_list),
+                re_path(r"^problem/info/(\w+)$", api.api_v1_problem_info),
+                re_path(r"^user/list$", api.api_v1_user_list),
+                re_path(r"^user/info/(\w+)$", api.api_v1_user_info),
+                re_path(r"^user/submissions/(\w+)$", api.api_v1_user_submissions),
+            ]
+        ),
+    ),
+    re_path(r"^blog/", blog.PostList.as_view(), name="blog_post_list"),
+    # Must come BEFORE blog_post: blog_post's slug regex (.*)$ is greedy and
+    # would otherwise swallow `/edit`.
+    re_path(
+        r"^post/(?P<id>\d+)-(?P<slug>.*)/edit$",
+        blog.EditBlogPost.as_view(),
+        name="edit_blog_post",
+    ),
+    re_path(
+        r"^post/(?P<id>\d+)-(?P<slug>.*)$", blog.PostView.as_view(), name="blog_post"
+    ),
+    re_path(
+        r"^post/(?P<id>\d+)/tickets$",
+        ticket.BlogTicketListView.as_view(),
+        name="blog_post_ticket_list",
+    ),
+    re_path(
+        r"^post/(?P<id>\d+)/tickets/new$",
+        ticket.NewBlogTicketView.as_view(),
+        name="new_blog_post_ticket",
+    ),
+    re_path(
+        r"^license/(?P<key>[-\w.]+)$", license.LicenseDetail.as_view(), name="license"
+    ),
+    re_path(
+        r"^mailgun/mail_activate/$",
+        mailgun.MailgunActivationView.as_view(),
+        name="mailgun_activate",
+    ),
+    re_path(
+        r"^widgets/",
+        include(
+            [
+                re_path(
+                    r"^rejudge$", widgets.rejudge_submission, name="submission_rejudge"
+                ),
+                re_path(
+                    r"^single_submission$",
+                    submission.single_submission_query,
+                    name="submission_single_query",
+                ),
+                re_path(
+                    r"^submission_testcases$",
+                    submission.SubmissionTestCaseQuery.as_view(),
+                    name="submission_testcases_query",
+                ),
+                re_path(
+                    r"^detect_timezone$",
+                    widgets.DetectTimezone.as_view(),
+                    name="detect_timezone",
+                ),
+                re_path(r"^status-table$", status.status_table, name="status_table"),
+                re_path(
+                    r"^template$",
+                    problem.LanguageTemplateAjax.as_view(),
+                    name="language_template_ajax",
+                ),
+                re_path(
+                    r"^select2/",
+                    include(
+                        [
+                            re_path(
+                                r"^user_search$",
+                                UserSearchSelect2View.as_view(),
+                                name="user_search_select2_ajax",
+                            ),
+                            re_path(
+                                r"^user_search_chat$",
+                                ChatUserSearchSelect2View.as_view(),
+                                name="chat_user_search_select2_ajax",
+                            ),
+                            re_path(
+                                r"^contest_users/(?P<contest>\w+)$",
+                                ContestUserSearchSelect2View.as_view(),
+                                name="contest_user_search_select2_ajax",
+                            ),
+                            re_path(
+                                r"^ticket_user$",
+                                TicketUserSelect2View.as_view(),
+                                name="ticket_user_select2_ajax",
+                            ),
+                            re_path(
+                                r"^ticket_assignee$",
+                                AssigneeSelect2View.as_view(),
+                                name="ticket_assignee_select2_ajax",
+                            ),
+                            re_path(
+                                r"^problem_authors$",
+                                ProblemAuthorSearchSelect2View.as_view(),
+                                name="problem_authors_select2_ajax",
+                            ),
+                            re_path(
+                                r"^quiz_users/(?P<quiz>[^/]+)$",
+                                QuizUserSearchSelect2View.as_view(),
+                                name="quiz_user_search_select2_ajax",
+                            ),
+                        ]
+                    ),
+                ),
+                re_path(
+                    r"^preview/",
+                    include(
+                        [
+                            re_path(
+                                r"^problem$",
+                                preview.ProblemMarkdownPreviewView.as_view(),
+                                name="problem_preview",
+                            ),
+                            re_path(
+                                r"^blog$",
+                                preview.BlogMarkdownPreviewView.as_view(),
+                                name="blog_preview",
+                            ),
+                            re_path(
+                                r"^contest$",
+                                preview.ContestMarkdownPreviewView.as_view(),
+                                name="contest_preview",
+                            ),
+                            re_path(
+                                r"^comment$",
+                                preview.CommentMarkdownPreviewView.as_view(),
+                                name="comment_preview",
+                            ),
+                            re_path(
+                                r"^profile$",
+                                preview.ProfileMarkdownPreviewView.as_view(),
+                                name="profile_preview",
+                            ),
+                            re_path(
+                                r"^organization$",
+                                preview.OrganizationMarkdownPreviewView.as_view(),
+                                name="organization_preview",
+                            ),
+                            re_path(
+                                r"^solution$",
+                                preview.SolutionMarkdownPreviewView.as_view(),
+                                name="solution_preview",
+                            ),
+                            re_path(
+                                r"^license$",
+                                preview.LicenseMarkdownPreviewView.as_view(),
+                                name="license_preview",
+                            ),
+                            re_path(
+                                r"^ticket$",
+                                preview.TicketMarkdownPreviewView.as_view(),
+                                name="ticket_preview",
+                            ),
+                        ]
+                    ),
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^stats/",
+        include(
+            [
+                re_path(
+                    "^language/",
+                    include(
+                        [
+                            re_path(
+                                "^$",
+                                stats.StatLanguage.as_view(),
+                                name="language_stats",
+                            ),
+                        ]
+                    ),
+                ),
+                re_path(
+                    "^site/",
+                    include(
+                        [
+                            re_path("^$", stats.StatSite.as_view(), name="site_stats"),
+                        ]
+                    ),
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^tickets/",
+        include(
+            [
+                re_path(r"^$", ticket.TicketList.as_view(), name="ticket_list"),
+                re_path(
+                    r"^ajax$", ticket.TicketListDataAjax.as_view(), name="ticket_ajax"
+                ),
+                re_path(
+                    r"^bulk-assign$",
+                    ticket.TicketBulkAssignView.as_view(),
+                    name="ticket_bulk_assign",
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^ticket/(?P<pk>\d+)",
+        include(
+            [
+                re_path(r"^$", ticket.TicketView.as_view(), name="ticket"),
+                re_path(
+                    r"^/$",
+                    lambda _, pk: HttpResponsePermanentRedirect(
+                        reverse("ticket", args=[pk])
+                    ),
+                ),
+                re_path(
+                    r"^/ajax$",
+                    ticket.TicketMessageDataAjax.as_view(),
+                    name="ticket_message_ajax",
+                ),
+                re_path(
+                    r"^/open$",
+                    ticket.TicketStatusChangeView.as_view(open=True),
+                    name="ticket_open",
+                ),
+                re_path(
+                    r"^/close$",
+                    ticket.TicketStatusChangeView.as_view(open=False),
+                    name="ticket_close",
+                ),
+                re_path(
+                    r"^/notes$",
+                    ticket.TicketNotesEditView.as_view(),
+                    name="ticket_notes",
+                ),
+                re_path(
+                    r"^/assignees$",
+                    ticket.TicketAssigneeEditView.as_view(),
+                    name="ticket_assignees",
+                ),
+                re_path(
+                    r"^/logs$",
+                    ticket.TicketLogView.as_view(),
+                    name="ticket_logs",
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^sitemap\.xml$",
+        sitemap,
+        {
+            "sitemaps": {
+                "problem": ProblemSitemap,
+                "user": UserSitemap,
+                "home": HomePageSitemap,
+                "contest": ContestSitemap,
+                "organization": OrganizationSitemap,
+                "blog": BlogPostSitemap,
+                "solutions": SolutionSitemap,
+                "pages": UrlSitemap(
+                    [
+                        {"location": "/about/", "priority": 0.9},
+                    ]
+                ),
+            }
+        },
+    ),
+    re_path(
+        r"^judge-select2/",
+        include(
+            [
+                re_path(
+                    r"^profile/$", UserSelect2View.as_view(), name="profile_select2"
+                ),
+                re_path(
+                    r"^organization/$",
+                    OrganizationSelect2View.as_view(),
+                    name="organization_select2",
+                ),
+                re_path(
+                    r"^problem/$", ProblemSelect2View.as_view(), name="problem_select2"
+                ),
+                re_path(
+                    r"^contest/$", ContestSelect2View.as_view(), name="contest_select2"
+                ),
+                re_path(
+                    r"^course/$",
+                    course.CourseSelect2View.as_view(),
+                    name="course_select2",
+                ),
+                re_path(
+                    r"^quiz/$",
+                    QuizSelect2View.as_view(),
+                    name="quiz_select2",
+                ),
+                re_path(
+                    r"^quiz_question/$",
+                    QuizQuestionSelect2View.as_view(),
+                    name="quiz_question_select2",
+                ),
+                re_path(
+                    r"^course_lesson/$",
+                    CourseLessonSelect2View.as_view(),
+                    name="course_lesson_select2",
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^tasks/",
+        include(
+            [
+                re_path(
+                    r"^status/(?P<task_id>[A-Za-z0-9-]*)$",
+                    tasks.task_status,
+                    name="task_status",
+                ),
+                re_path(
+                    r"^ajax_status$", tasks.task_status_ajax, name="task_status_ajax"
+                ),
+                re_path(
+                    r"^chatbot_stream$",
+                    chatbot.chatbot_stream_ajax,
+                    name="chatbot_stream_ajax",
+                ),
+                re_path(r"^success$", tasks.demo_success),
+                re_path(r"^failure$", tasks.demo_failure),
+                re_path(r"^progress$", tasks.demo_progress),
+            ]
+        ),
+    ),
+    re_path(r"^about/", about.about, name="about"),
+    re_path(
+        r"^docs/",
+        include(
+            [
+                re_path(
+                    r"^contest_format_instructions/$",
+                    docs.contest_format_instructions,
+                    name="contest_format_instructions",
+                ),
+                re_path(
+                    r"^test_data_instructions/$",
+                    docs.test_data_instructions,
+                    name="test_data_instructions",
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^chat/",
+        include(
+            [
+                re_path(
+                    r"^(?P<room_id>\d*)$",
+                    login_required(chat.ChatView.as_view()),
+                    name="chat",
+                ),
+                re_path(r"^delete/$", chat.delete_message, name="delete_chat_message"),
+                re_path(r"^mute/$", chat.mute_message, name="mute_chat_message"),
+                re_path(r"^post/$", chat.post_message, name="post_chat_message"),
+                re_path(r"^ajax$", chat.chat_message_ajax, name="chat_message_ajax"),
+                re_path(
+                    r"^online_status/ajax$",
+                    chat.online_status_ajax,
+                    name="online_status_ajax",
+                ),
+                re_path(
+                    r"^get_or_create_room$",
+                    chat.get_or_create_room,
+                    name="get_or_create_room",
+                ),
+                re_path(
+                    r"^update_last_seen$",
+                    chat.update_last_seen,
+                    name="update_last_seen",
+                ),
+                re_path(
+                    r"^online_status/user/ajax$",
+                    chat.user_online_status_ajax,
+                    name="user_online_status_ajax",
+                ),
+                re_path(
+                    r"^toggle_ignore/(?P<user_id>\d+)$",
+                    chat.toggle_ignore,
+                    name="toggle_ignore",
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^internal/",
+        include(
+            [
+                re_path(
+                    r"^problem_queue$",
+                    internal.InternalProblemQueue.as_view(),
+                    name="internal_problem_queue",
+                ),
+                re_path(
+                    r"^problem_duplicates$",
+                    internal.InternalProblemDuplicates.as_view(),
+                    name="internal_problem_duplicates",
+                ),
+                re_path(
+                    r"^problem_duplicates/detail$",
+                    internal.InternalProblemDuplicateDetail.as_view(),
+                    name="internal_problem_duplicate_detail",
+                ),
+                re_path(
+                    r"^problem_duplicates/status_api$",
+                    internal.InternalProblemDuplicateStatusApi.as_view(),
+                    name="internal_problem_duplicate_status_api",
+                ),
+                re_path(
+                    r"^problem_queue_mark_private$",
+                    internal.mark_problem_private,
+                    name="internal_mark_problem_private",
+                ),
+                re_path(
+                    r"^problem_tag$",
+                    internal.problem_tag,
+                    name="internal_problem_tag",
+                ),
+                re_path(
+                    r"^publish_problem$",
+                    internal.publish_problem,
+                    name="internal_publish_problem",
+                ),
+                re_path(
+                    r"^reject_problem$",
+                    internal.reject_problem,
+                    name="internal_reject_problem",
+                ),
+                re_path(
+                    r"^improve_markdown$",
+                    internal.improve_markdown_queue,
+                    name="internal_improve_markdown",
+                ),
+                re_path(
+                    r"^request_public$",
+                    internal.request_public,
+                    name="internal_request_public",
+                ),
+                re_path(
+                    r"^chat_moderation$",
+                    internal.InternalChatModeration.as_view(),
+                    name="internal_chat_moderation",
+                ),
+                re_path(
+                    r"^unmute_user$",
+                    internal.unmute_user,
+                    name="internal_unmute_user",
+                ),
+                re_path(
+                    r"^request_time$",
+                    internal.InternalRequestTime.as_view(),
+                    name="internal_request_time",
+                ),
+                re_path(
+                    r"^request_time_detail$",
+                    internal.InternalRequestTimeDetail.as_view(),
+                    name="internal_request_time_detail",
+                ),
+                re_path(
+                    r"^internal_slow_request$",
+                    internal.InternalSlowRequest.as_view(),
+                    name="internal_slow_request",
+                ),
+                re_path(
+                    r"^internal_slow_request_detail$",
+                    internal.InternalSlowRequestDetail.as_view(),
+                    name="internal_slow_request_detail",
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^notifications/",
+        include(
+            [
+                re_path(
+                    r"^$", notification.NotificationList.as_view(), name="notification"
+                ),
+                re_path(
+                    r"^(?P<page>\d+)$",
+                    notification.NotificationList.as_view(),
+                    name="notification",
+                ),
+                re_path(
+                    r"^mark_read/$",
+                    notification.NotificationMarkAsRead.as_view(),
+                    name="notification_mark_read",
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^import_users/",
+        include(
+            [
+                re_path(r"^$", user.ImportUsersView.as_view(), name="import_users"),
+                re_path(
+                    r"post_file/$",
+                    user.import_users_post_file,
+                    name="import_users_post_file",
+                ),
+                re_path(
+                    r"submit/$", user.import_users_submit, name="import_users_submit"
+                ),
+                re_path(
+                    r"sample/$", user.sample_import_users, name="import_users_sample"
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^resolver/(?P<contest>\w+)", resolver.Resolver.as_view(), name="resolver"
+    ),
+    # User file upload and management
+    re_path(r"^upload/$", custom_file_upload.file_upload, name="custom_file_upload"),
+    re_path(
+        r"^upload/my-files/$", custom_file_upload.user_file_list, name="user_file_list"
+    ),
+    re_path(
+        r"^upload/my-files/delete/(?P<filename>.+)/$",
+        custom_file_upload.user_file_delete,
+        name="user_file_delete",
+    ),
+    re_path(
+        r"^upload/my-files/download/(?P<filename>.+)/$",
+        custom_file_upload.user_file_download,
+        name="user_file_download",
+    ),
+    re_path(
+        r"^upload/my-files/rename/(?P<filename>.+)/$",
+        custom_file_upload.user_file_rename,
+        name="user_file_rename",
+    ),
+    # User file direct upload API endpoints
+    re_path(
+        r"^upload/api/config/$",
+        custom_file_upload.user_file_upload_config,
+        name="user_file_upload_config",
+    ),
+    re_path(
+        r"^upload/api/confirm/$",
+        custom_file_upload.user_file_upload_confirm,
+        name="user_file_upload_confirm",
+    ),
+    # Direct upload API endpoints (for presigned URL uploads)
+    re_path(
+        r"^api/upload/config/$",
+        direct_upload.get_upload_config,
+        name="direct_upload_config",
+    ),
+    re_path(
+        r"^api/upload/file/$",
+        direct_upload.local_upload,
+        name="direct_upload_local",
+    ),
+    re_path(
+        r"^api/upload/save/$",
+        direct_upload.save_to_model,
+        name="direct_upload_save",
+    ),
+    re_path(
+        r"^api/upload/delete/$",
+        direct_upload.delete_file,
+        name="direct_upload_delete",
+    ),
+    re_path(
+        r"^api/upload/pagedown/$",
+        direct_upload.pagedown_upload_config,
+        name="pagedown_upload_config",
+    ),
+    re_path(
+        r"^submission/upload-config$",
+        direct_upload.submission_upload_config,
+        name="submission_upload_config",
+    ),
+] + url_static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+if "debug_toolbar.middleware.DebugToolbarMiddleware" in settings.MIDDLEWARE:
+    urlpatterns.append(path("__debug__/", include("debug_toolbar.urls")))
+
+favicon_paths = [
+    "apple-touch-icon-180x180.png",
+    "apple-touch-icon-114x114.png",
+    "android-chrome-72x72.png",
+    "apple-touch-icon-57x57.png",
+    "apple-touch-icon-72x72.png",
+    "apple-touch-icon.png",
+    "mstile-70x70.png",
+    "android-chrome-36x36.png",
+    "apple-touch-icon-precomposed.png",
+    "apple-touch-icon-76x76.png",
+    "apple-touch-icon-60x60.png",
+    "android-chrome-96x96.png",
+    "mstile-144x144.png",
+    "mstile-150x150.png",
+    "safari-pinned-tab.svg",
+    "android-chrome-144x144.png",
+    "apple-touch-icon-152x152.png",
+    "favicon-96x96.png",
+    "favicon-32x32.png",
+    "favicon-16x16.png",
+    "android-chrome-192x192.png",
+    "android-chrome-512x512.png",
+    "android-chrome-48x48.png",
+    "mstile-310x150.png",
+    "apple-touch-icon-144x144.png",
+    "browserconfig.xml",
+    "manifest.json",
+    "apple-touch-icon-120x120.png",
+    "mstile-310x310.png",
+    "reload.png",
+]
+
+for favicon in favicon_paths:
+    urlpatterns.append(
+        re_path(r"^%s$" % favicon, RedirectView.as_view(url=static("icons/" + favicon)))
+    )
+
+handler404 = "judge.views.error.error404"
+handler403 = "judge.views.error.error403"
+handler500 = "judge.views.error.error500"
+
+if "impersonate" in settings.INSTALLED_APPS:
+    urlpatterns.append(re_path(r"^impersonate/", include("impersonate.urls")))

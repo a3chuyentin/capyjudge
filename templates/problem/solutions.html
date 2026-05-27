@@ -1,0 +1,382 @@
+{% extends "problem/edit_base.html" %}
+{% set page_type = 'solutions' %}
+
+{% block js_media %}
+  <script type="text/javascript">
+    $(document).ready(function() {
+      // Handle alert close buttons
+      $('.alert .close').click(function() {
+        $(this).closest('.alert').fadeOut(300);
+      });
+
+      // Toggle rough ideas input area
+      $('#generate-solution-btn').click(function() {
+        var $inputArea = $('#rough-ideas-input');
+        if ($inputArea.is(':visible')) {
+          $inputArea.slideUp();
+        } else {
+          $inputArea.slideDown();
+          $('#rough-ideas-textarea').focus();
+        }
+      });
+
+      // Poll for task result using existing task status endpoint
+      function pollTaskResult(taskId, $btn, $status) {
+        var pollInterval = setInterval(function() {
+          $.ajax({
+            url: '{{ url('task_status_ajax') }}?id=' + taskId,
+            type: 'GET',
+            success: function(data) {
+              if (data.code === 'SUCCESS') {
+                clearInterval(pollInterval);
+                // Re-enable buttons
+                $btn.prop('disabled', false);
+                $('#generate-solution-btn').prop('disabled', false);
+
+                if (data.success && data.solution_content) {
+                  // Show result below button
+                  $('#generated-solution-result').show();
+                  $('#generated-solution-content').val(data.solution_content);
+                  var statusText = '{{ _('Solution generated!') }}';
+                  if (data.has_ac_code) {
+                    statusText += ' ({{ _('based on AC code') }})';
+                  }
+                  $status.text(statusText).css('color', 'green');
+                } else if (data.error) {
+                  $status.text('{{ _('Error: ') }}' + data.error).css('color', 'red');
+                } else {
+                  $status.text('{{ _('No solution generated') }}').css('color', 'orange');
+                }
+
+                // Clear status after 10 seconds
+                setTimeout(function() {
+                  $status.text('').css('color', '#666');
+                }, 10000);
+              } else if (data.code === 'FAILURE') {
+                clearInterval(pollInterval);
+                $btn.prop('disabled', false);
+                $('#generate-solution-btn').prop('disabled', false);
+                $status.text('{{ _('Error: ') }}' + (data.error || 'Task failed')).css('color', 'red');
+              }
+              // If code is 'WORKING' or 'PROGRESS', continue polling
+            },
+            error: function() {
+              clearInterval(pollInterval);
+              $btn.prop('disabled', false);
+              $('#generate-solution-btn').prop('disabled', false);
+              $status.text('{{ _('Network error occurred') }}').css('color', 'red');
+            }
+          });
+        }, 2000); // Poll every 2 seconds
+      }
+
+      // Handle actual generation
+      $('#do-generate-solution-btn').click(function() {
+        var $btn = $(this);
+        var $status = $('#generate-solution-status');
+        var roughIdeas = $('#rough-ideas-textarea').val().trim();
+
+        // Disable button and show loading
+        $btn.prop('disabled', true);
+        $('#generate-solution-btn').prop('disabled', true);
+        $status.text('{{ _('Generating solution...') }}').css('color', '#666');
+
+        $.ajax({
+          url: window.location.href,
+          type: 'POST',
+          data: {
+            'generate_solution': '1',
+            'rough_ideas': roughIdeas,
+            'csrfmiddlewaretoken': $('[name=csrfmiddlewaretoken]').val()
+          },
+          success: function(data) {
+            if (data.success && data.task_id) {
+              // Task dispatched, start polling
+              $status.text('{{ _('Processing... please wait') }}').css('color', '#666');
+              pollTaskResult(data.task_id, $btn, $status);
+            } else if (data.error) {
+              $status.text('{{ _('Error: ') }}' + data.error).css('color', 'red');
+              $btn.prop('disabled', false);
+              $('#generate-solution-btn').prop('disabled', false);
+            }
+          },
+          error: function(xhr, status, error) {
+            $status.text('{{ _('Network error occurred') }}').css('color', 'red');
+            $btn.prop('disabled', false);
+            $('#generate-solution-btn').prop('disabled', false);
+          }
+        });
+      });
+
+      // Copy generated solution to clipboard
+      $('#generated-solution-copy').click(function() {
+        var $content = $('#generated-solution-content');
+        $content.select();
+        document.execCommand('copy');
+        $(this).text('{{ _('Copied!') }}');
+        setTimeout(function() {
+          $('#generated-solution-copy').text('{{ _('Copy') }}');
+        }, 2000);
+      });
+
+      // Insert generated solution into editor
+      $('#generated-solution-insert').click(function() {
+        var content = $('#generated-solution-content').val();
+        // PageDown wraps the textarea with wmd-input-{id} format
+        var $textarea = $('#wmd-input-{{ form.content.id_for_label }}');
+        if ($textarea.length) {
+          $textarea.val(content);
+          // Trigger input event to update PageDown preview
+          $textarea.trigger('input').trigger('change');
+          $('#generate-solution-status').text('{{ _('Inserted into editor!') }}').css('color', 'green');
+        }
+      });
+    });
+  </script>
+{% endblock %}
+
+{% block edit_media %}
+  {{ form.media }}
+{% endblock %}
+
+{% block edit_content %}
+  <div class="problem-page-container solutions-page">
+    <!-- Success/Error Messages -->
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert {% if message.tags == 'success' %}alert-success{% elif message.tags == 'error' %}alert-danger{% else %}alert-info{% endif %} alert-dismissible" role="alert">
+          <i class="fa fa-{% if message.tags == 'success' %}check-circle{% elif message.tags == 'error' %}exclamation-triangle{% else %}info-circle{% endif %}"></i>
+          {{ message }}
+          <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="problem-content-layout">
+      <div class="problem-content-grid single-column">
+        <!-- Add/Edit Solution Form -->
+        <div class="form-section">
+          {% if existing_solution %}
+              <!-- Edit Solution Form -->
+            <div class="problem-card">
+              <div class="card-body">
+                <form method="post">
+                  {% csrf_token %}
+
+                  {% if form.non_field_errors() %}
+                    <div class="alert alert-danger">
+                      {% for error in form.non_field_errors() %}
+                        <div><i class="fa fa-exclamation-triangle"></i> {{ error }}</div>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+
+                  <div class="problem-form-group">
+                    <label for="{{ form.is_public.id_for_label }}" class="problem-form-label">
+                      <strong>{{ form.is_public.label }}:</strong>
+                    </label>
+                    {{ form.is_public }}
+                    {% if form.is_public.errors %}
+                      <div class="error-message">
+                        {% for error in form.is_public.errors %}{{ error }}{% endfor %}
+                      </div>
+                    {% endif %}
+                    <div class="problem-help-text">{{ _('Whether this solution should be publicly visible to all users.') }}</div>
+                  </div>
+
+                  <div class="problem-form-group">
+                    <label for="{{ form.publish_on.id_for_label }}" class="problem-form-label">
+                      <strong>{{ form.publish_on.label }}<span class="required-asterisk"> * </span>:</strong>
+                    </label>
+                    {{ form.publish_on }}
+                    {% if form.publish_on.errors %}
+                      <div class="error-message">
+                        {% for error in form.publish_on.errors %}{{ error }}{% endfor %}
+                      </div>
+                    {% endif %}
+                    <div class="problem-help-text">{{ _('Date and time when this solution should become available.') }}</div>
+                  </div>
+
+                  <div class="problem-form-group">
+                    <label for="{{ form.authors.id_for_label }}" class="problem-form-label">
+                      <strong>{{ form.authors.label }}{% if form.authors.field.required %}<span class="required-asterisk"> *</span>{% endif %}:</strong>
+                    </label>
+                    {{ form.authors }}
+                    {% if form.authors.errors %}
+                      <div class="error-message">
+                        {% for error in form.authors.errors %}{{ error }}{% endfor %}
+                      </div>
+                    {% endif %}
+                    <div class="problem-help-text">{{ _('Select the authors who contributed to this solution.') }}</div>
+                  </div>
+
+                  <!-- Auto Generate Solution Button (AI permission required) -->
+                  {% if request.user|can_use_ai_features %}
+                    <div class="problem-form-group">
+                      <button type="button" id="generate-solution-btn" class="action-btn small" style="margin-right: 10px;">
+                        <i class="fa fa-magic"></i> {{ _('Auto Generate Solution') }}
+                      </button>
+                      <span id="generate-solution-status" style="margin-left: 10px;"></span>
+                    </div>
+                    <div class="problem-form-group" style="margin-top: -10px;">
+                      <small class="gray">{{ _('Tip: Uses AI to generate a solution based on the problem statement and AC submissions. You can optionally provide your rough ideas.') }}</small>
+                    </div>
+                    <!-- Rough ideas input area (hidden by default) -->
+                    <div id="rough-ideas-input" class="problem-form-group" style="display: none; flex-direction: column; margin-top: 10px; padding: 15px; border: 1px solid; border-radius: 4px;">
+                      <label style="margin-bottom: 8px;"><strong>{{ _('Your rough ideas (optional):') }}</strong></label>
+                      <textarea id="rough-ideas-textarea" placeholder="{{ _('Enter your solution approach, main ideas, or rough draft here. Leave empty to generate from scratch...') }}" style="width: 100%; min-height: 120px; font-family: monospace; font-size: 13px; padding: 10px; border-radius: 4px; border: 1px solid; resize: vertical; margin-bottom: 10px;"></textarea>
+                      <div>
+                        <button type="button" id="do-generate-solution-btn" class="action-btn small">
+                          <i class="fa fa-cogs"></i> {{ _('Generate Solution') }}
+                        </button>
+                      </div>
+                    </div>
+                    <div id="generated-solution-result" class="problem-form-group" style="display: none; flex-direction: column;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <label><strong>{{ _('Generated Solution:') }}</strong></label>
+                        <div>
+                          <button type="button" id="generated-solution-insert" class="action-btn small" style="margin-right: 5px;">{{ _('Insert') }}</button>
+                          <button type="button" id="generated-solution-copy" class="action-btn small">{{ _('Copy') }}</button>
+                        </div>
+                      </div>
+                      <textarea id="generated-solution-content" readonly style="width: 100%; min-height: 300px; font-family: monospace; font-size: 13px; padding: 10px; border-radius: 4px; resize: vertical;"></textarea>
+                    </div>
+                  {% endif %}
+
+                  <div class="problem-form-group">
+                    <label for="{{ form.content.id_for_label }}" class="problem-form-label">
+                      <strong>{{ form.content.label }}{% if form.content.field.required %}<span class="required-asterisk"> *</span>{% endif %}:</strong>
+                    </label>
+                    {{ form.content }}
+                    {% if form.content.errors %}
+                      <div class="error-message">
+                        {% for error in form.content.errors %}{{ error }}{% endfor %}
+                      </div>
+                    {% endif %}
+                    <div class="problem-help-text">{{ _('Write the solution explanation, approach, and implementation details.') }}</div>
+                  </div>
+
+                  <div class="problem-form-actions">
+                    <button type="submit" class="action-btn">
+                      <i class="fa fa-save"></i> {{ _('Update Solution') }}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          {% else %}
+              <!-- Add Solution Form -->
+            <div class="problem-card">
+              <div class="card-body">
+                <form method="post">
+                  {% csrf_token %}
+
+                  {% if form.non_field_errors() %}
+                    <div class="alert alert-danger">
+                      {% for error in form.non_field_errors() %}
+                        <div><i class="fa fa-exclamation-triangle"></i> {{ error }}</div>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+
+                  <div class="problem-form-group">
+                    <label for="{{ form.is_public.id_for_label }}" class="problem-form-label">
+                      <strong>{{ form.is_public.label }}:</strong>
+                    </label>
+                    {{ form.is_public }}
+                    {% if form.is_public.errors %}
+                      <div class="error-message">
+                        {% for error in form.is_public.errors %}{{ error }}{% endfor %}
+                      </div>
+                    {% endif %}
+                    <div class="problem-help-text">{{ _('Whether this solution should be publicly visible to all users.') }}</div>
+                  </div>
+
+                  <div class="problem-form-group">
+                    <label for="{{ form.publish_on.id_for_label }}" class="problem-form-label">
+                      <strong>{{ form.publish_on.label }}<span class="required-asterisk"> * </span>:</strong>
+                    </label>
+                    {{ form.publish_on }}
+                    {% if form.publish_on.errors %}
+                      <div class="error-message">
+                        {% for error in form.publish_on.errors %}{{ error }}{% endfor %}
+                      </div>
+                    {% endif %}
+                    <div class="problem-help-text">{{ _('Date and time when this solution should become available.') }}</div>
+                  </div>
+
+                  <div class="problem-form-group">
+                    <label for="{{ form.authors.id_for_label }}" class="problem-form-label">
+                      <strong>{{ form.authors.label }}{% if form.authors.field.required %}<span class="required-asterisk"> *</span>{% endif %}:</strong>
+                    </label>
+                    {{ form.authors }}
+                    {% if form.authors.errors %}
+                      <div class="error-message">
+                        {% for error in form.authors.errors %}{{ error }}{% endfor %}
+                      </div>
+                    {% endif %}
+                    <div class="problem-help-text">{{ _('Select the authors who contributed to this solution.') }}</div>
+                  </div>
+
+                  <!-- Auto Generate Solution Button (AI permission required) -->
+                  {% if request.user|can_use_ai_features %}
+                    <div class="problem-form-group">
+                      <button type="button" id="generate-solution-btn" class="action-btn small" style="margin-right: 10px;">
+                        <i class="fa fa-magic"></i> {{ _('Auto Generate Solution') }}
+                      </button>
+                      <span id="generate-solution-status" style="margin-left: 10px;"></span>
+                    </div>
+                    <div class="problem-form-group" style="margin-top: -10px;">
+                      <small class="gray">{{ _('Tip: Uses AI to generate a solution based on the problem statement and AC submissions. You can optionally provide your rough ideas.') }}</small>
+                    </div>
+                    <!-- Rough ideas input area (hidden by default) -->
+                    <div id="rough-ideas-input" class="problem-form-group" style="display: none; flex-direction: column; margin-top: 10px; padding: 15px; border: 1px solid; border-radius: 4px;">
+                      <label style="margin-bottom: 8px;"><strong>{{ _('Your rough ideas (optional):') }}</strong></label>
+                      <textarea id="rough-ideas-textarea" placeholder="{{ _('Enter your solution approach, main ideas, or rough draft here. Leave empty to generate from scratch...') }}" style="width: 100%; min-height: 120px; font-family: monospace; font-size: 13px; padding: 10px; border-radius: 4px; border: 1px solid; resize: vertical; margin-bottom: 10px;"></textarea>
+                      <div>
+                        <button type="button" id="do-generate-solution-btn" class="action-btn small">
+                          <i class="fa fa-cogs"></i> {{ _('Generate Solution') }}
+                        </button>
+                      </div>
+                    </div>
+                    <div id="generated-solution-result" class="problem-form-group" style="display: none; flex-direction: column;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <label><strong>{{ _('Generated Solution:') }}</strong></label>
+                        <div>
+                          <button type="button" id="generated-solution-insert" class="action-btn small" style="margin-right: 5px;">{{ _('Insert') }}</button>
+                          <button type="button" id="generated-solution-copy" class="action-btn small">{{ _('Copy') }}</button>
+                        </div>
+                      </div>
+                      <textarea id="generated-solution-content" readonly style="width: 100%; min-height: 300px; font-family: monospace; font-size: 13px; padding: 10px; border-radius: 4px; resize: vertical;"></textarea>
+                    </div>
+                  {% endif %}
+
+                  <div class="problem-form-group">
+                    <label for="{{ form.content.id_for_label }}" class="problem-form-label">
+                      <strong>{{ form.content.label }}{% if form.content.field.required %}<span class="required-asterisk"> *</span>{% endif %}:</strong>
+                    </label>
+                    {{ form.content }}
+                    {% if form.content.errors %}
+                      <div class="error-message">
+                        {% for error in form.content.errors %}{{ error }}{% endfor %}
+                      </div>
+                    {% endif %}
+                    <div class="problem-help-text">{{ _('Write the solution explanation, approach, and implementation details.') }}</div>
+                  </div>
+
+                  <div class="problem-form-actions">
+                    <button type="submit" class="action-btn">
+                      <i class="fa fa-plus"></i> {{ _('Add Solution') }}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

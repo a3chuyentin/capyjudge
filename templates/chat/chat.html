@@ -1,0 +1,113 @@
+{% set layout = "no_wrapper" %}
+{% extends "base.html" %}
+{% block title_row %}{% endblock %}
+{% block title_ruler %}{% endblock %}
+{% block title %} {{_('Chat Box')}} {% endblock %}
+
+{% block js_media %}
+  {% include "event-load.html" %}
+  <script type="module" src="https://unpkg.com/emoji-picker-element@1"></script>
+
+  <script type="text/javascript">
+    // Chat Configuration - passed to static chat.js
+    window.ChatConfig = {
+      urls: {
+        chat: "{{ url('chat', '') }}",
+        postMessage: "{{ url('post_chat_message') }}",
+        deleteMessage: "{{ url('delete_chat_message') }}",
+        muteMessage: "{{ url('mute_chat_message') }}",
+        messageAjax: "{{ url('chat_message_ajax') }}",
+        onlineStatus: "{{ url('online_status_ajax') }}",
+        userOnlineStatus: "{{ url('user_online_status_ajax') }}",
+        getOrCreateRoom: "{{ url('get_or_create_room') }}",
+        updateLastSeen: "{{ url('update_last_seen') }}",
+        userSearch: "{{ url('chat_user_search_select2_ajax') }}"
+      },
+      user: {
+        id: {{ request.profile.id }},
+        isStaff: {{ request.user.has_perm('judge.change_comment')|tojson }},
+        isMuted: {{ request.profile.mute|tojson }}
+      },
+      room: {
+        id: "{{ room if room else '' }}",
+        otherUserId: "{{ other_user.id if other_user else '' }}",
+        lastMsgId: {{ last_msg if last_msg else 'null' }}
+      },
+      event: {
+        daemonLocation: "{{ EVENT_DAEMON_LOCATION }}",
+        lobbyChannel: "{{ chat_lobby_channel }}",
+        chatChannel: "{{ chat_channel }}"
+      },
+      i18n: {
+        newMessages: "{{ _('New message(s)') }}",
+        newMessage: "{{ _('New message') }}",
+        chatBox: "{{ _('Chat Box') }}",
+        muteConfirm: "{{ _('Mute this user and delete all messages?') }}",
+        searchPlaceholder: "{{ _('Search by handle...') }}",
+        enterMessage: "{{ _('Enter your message') }}"
+      },
+      messageTemplate: `{% with message=message_template %}{% include "chat/message.html" %}{% endwith %}`
+    };
+  </script>
+
+  {% compress js %}
+    <script type="text/javascript" src="{{ static('chat.js') }}"></script>
+  {% endcompress %}
+{% endblock js_media %}
+
+{% block media %}
+{% endblock media %}
+
+{% block body %}
+  <div class="chat chat-page">
+    <div id="chat-container" class="chat-container">
+      <div id="chat-online" class="chat-sidebar chat-left-panel sidebox">
+        <div id="chat-online-content" class="chat-sidebar-content">
+          <div id="search-container" class="chat-search-container">
+            <form id="chat-search-form" name="form" action="{{ url('get_or_create_room') }}" method="post">
+              {% csrf_token %}
+              <input id="search-handle" type="text" name="search"
+                     placeholder="{{ _('Search by handle...') }}">
+            </form>
+          </div>
+          <div id="chat-online-list">
+            {% include "chat/online_status.html" %}
+          </div>
+        </div>
+      </div>
+      <div id="chat-area" class="chat-area chat-right-panel">
+        <div id="chat-info" class="chat-header">
+          {% include 'chat/user_online_status.html' %}
+        </div>
+        <div id="chat-box" class="chat-box">
+          <span id="loader" class="chat-loader">
+            <i class="fa fa-spinner fa-pulse"></i>
+          </span>
+          <ul id="chat-log" class="chat-log">
+            {% include 'chat/message_list.html' %}
+          </ul>
+        </div>
+        {% if request.in_contest and request.participation.contest.use_clarifications %}
+          <div class="chat-input-area chat-disabled-notice">
+            {{ _('Chat is disabled during contest.') }}
+          </div>
+        {% else %}
+          <div id="chat-input-container" class="chat-input-area">
+            <div class="chat-input-wrapper">
+              <textarea rows="1" maxlength="{{5000 if room else 200}}" id="chat-input" class="chat-input" placeholder="{{_('Enter your message')}}"></textarea>
+              <div class="chat-input-icon chat-emoji-btn" id="emoji-button" title="{{_('Emoji')}}">
+                <i class="icofont-slightly-smile"></i>
+              </div>
+            </div>
+            <div class="chat-input-icon chat-submit-btn" id="chat-submit-button">
+              <i class="fa fa-paper-plane"></i>
+            </div>
+          </div>
+        {% endif %}
+        <div class="tooltip emoji-tooltip" role="tooltip">
+          <emoji-picker></emoji-picker>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock body %}

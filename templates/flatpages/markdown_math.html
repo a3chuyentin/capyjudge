@@ -1,0 +1,5 @@
+{% extends "flatpages/markdown.html" %}
+
+{% block body %}
+  <div class="content-description">{{ flatpage.content|markdown|reference }}</div>
+{% endblock %}

@@ -1,0 +1,398 @@
+{% extends "user/base-users-two-col.html" %}
+
+{% block left_sidebar %}
+  {% include "contest/contest-tabs.html" %}
+{% endblock %}
+
+{% block users_media %}
+  {% include "contest/ranking-css.html" %}
+{% endblock %}
+
+{% block users_js_media %}
+  {% include "contest/contest-datetime-js.html" %}
+  {% if can_edit %}
+    <script type="text/javascript">
+      $(function () {
+        $('a.disqualify-participation').click(function (e) {
+          e.preventDefault();
+          if (e.ctrlKey || e.metaKey || confirm("{{ _('Are you sure you want to disqualify this participation?') }}"))
+            $(this).closest('form').submit();
+        })
+        $('a.un-disqualify-participation').click(function (e) {
+          e.preventDefault();
+          if (e.ctrlKey || e.metaKey || confirm("{{ _('Are you sure you want to un-disqualify this participation?') }}"))
+            $(this).closest('form').submit();
+        })
+      });
+    </script>
+  {% endif %}
+  {% if perms.judge.change_contestparticipation %}
+    <script type="text/javascript">
+      $(function () {
+        $('td.user').find('a.user-name').click(function (e) {
+          var data = $(this).siblings('.edit-participation');
+          if (e.altKey && data.length) {
+            window.open(data.attr('data-link'), '_blank');
+            return false;
+          }
+        });
+      });
+    </script>
+  {% endif %}
+  {% if not contest.ended %}
+    <script type="text/javascript">
+      $(function () {
+        window.install_tooltips = function () {
+          $('td.user').find('a.user-name').each(function () {
+            var link = $(this);
+            link.mouseenter(function (e) {
+              var start_time = link.siblings('.start-time').text();
+              link.addClass('tooltipped tooltipped-e').attr('aria-label', start_time);
+            }).mouseleave(function (e) {
+              link.removeClass('tooltipped tooltipped-e').removeAttr('aria-label');
+            });
+          });
+        };
+
+        install_tooltips();
+      });
+    </script>
+  {% endif %}
+  {% if page_type == 'ranking' or page_type == 'final_ranking' %}
+    <script type="text/javascript">
+      $.fn.ignore = function (sel) {
+        return this.clone().find(sel || '>*').remove().end();
+      };
+
+      function download_ranking_as_csv() {
+        function clean_text(text) {
+      // Remove new line and leading/trailing spaces
+          text = text.replace(/(\r\n|\n|\r)/gm, '').trim();
+      // Escape double-quote with double-double-quote
+          text = text.replace(/"/g, '""');
+
+          return '"' + text + '"';
+        }
+
+        var csv = [];
+
+        $('table#users-table thead tr').each(function () {
+          var header = [];
+          $(this).find('th').each(function () {
+            var $col = $(this);
+
+            if ($col.hasClass('rating-column')) {
+              return;
+            } else if ($col.hasClass('problem-score-col')) {
+              header.push(clean_text($col.find('.problem-code').text()));
+            } else {
+              header.push(clean_text($col.text()));
+            }
+          });
+          csv.push(header.join(','));
+        });
+
+        $('table#users-table tbody tr').each(function () {
+          var row_data = [];
+
+          $(this).find('td').each(function () {
+            var $col = $(this);
+            if ($col.hasClass('rating-column')) {
+              return;
+            } else if ($col.hasClass('user-name')) {
+              row_data.push(clean_text($col.ignore('.fullname').ignore('.school').text()));
+              row_data.push(clean_text($col.ignore('.user').ignore('.school').text()));
+              row_data.push(clean_text($col.ignore('.user').ignore('.fullname').text()));
+            } else {
+              row_data.push(clean_text($col.ignore('.solving-time').text()));
+            }
+          });
+          csv.push(row_data.join(','));
+        });
+
+        csv = csv.join('\n');
+        var filename = '{{ contest.key }}_' + moment().format('MMMM Do YYYY, h:mm:ss a'); + '.csv';
+        var link = document.createElement('a');
+        link.style.display = 'none';
+        link.setAttribute('target', '_blank');
+        link.setAttribute('href', 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(csv));
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    </script>
+  {% endif %}
+  {% include "contest/media-js.html" %}
+  {% if last_msg and EVENT_DAEMON_LOCATION %}
+    {% include "event-load.html" %}
+    <script type="text/javascript">
+      $(function () {
+        var _updateTimer = null;
+        var _debounceMs = 10000;
+
+        function debounced_update() {
+          if (_updateTimer) return;
+          _updateTimer = setTimeout(function () {
+            _updateTimer = null;
+            update_ranking();
+          }, _debounceMs);
+        }
+
+        var receiver = new EventReceiver(
+          "{{ EVENT_DAEMON_LOCATION }}",
+          ["contest_{{ contest.key }}"],
+          {{ last_msg }},
+          function (message) {
+            if (message.type === "ranking-update") {
+              debounced_update();
+              // Reset the polling interval on push update
+              if (window.rankingInterval) {
+                clearInterval(window.rankingInterval);
+                window.rankingInterval = setInterval(update_ranking, 60 * 1000);
+              }
+            }
+          }
+        );
+      });
+    </script>
+  {% endif %}
+  <script type="text/javascript">
+    $(function () {
+      var CONTEST_KEY = "{{ contest.key }}";
+      window.CONTEST_KEY = CONTEST_KEY;
+      var STORAGE_KEY = "contest_fav_ids_" + CONTEST_KEY;
+
+      // Track current page and search for AJAX refreshes
+      window.currentPage = {{ page_obj.number if page_obj else 1 }};
+      window.currentSearch = "{{ search_query|default('', true)|escapejs }}";
+
+      // --- Favorites (stored by user ID) ---
+      function getFavorites() {
+        try {
+          return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+        } catch (e) {
+          return {};
+        }
+      }
+
+      function saveFavorites(favs) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(favs));
+      }
+
+      function getUserId(row) {
+        return row.attr('data-id');
+      }
+
+      window.applyFavoriteStars = function () {
+        var favs = getFavorites();
+        $('#users-table tbody tr[data-id]').each(function () {
+          var $row = $(this);
+          var uid = getUserId($row);
+          if (!uid) return;
+
+          $row.find('.fav-star').remove();
+
+          var isFav = !!favs[uid];
+          var $star = $('<span class="fav-star"></span>').attr('title', '{{ _("Toggle favorite") }}')
+            .text(isFav ? '\u2605' : '\u2606')
+            .toggleClass('fav-active', isFav);
+
+          $row.find('.user-name .rating').first().after($star);
+          $row.toggleClass('fav-row', isFav);
+        });
+      };
+
+      $(document).on('click', '.fav-star', function (e) {
+        e.stopPropagation();
+        var $star = $(this);
+        var $row = $star.closest('tr');
+        var uid = getUserId($row);
+        if (!uid) return;
+
+        var favs = getFavorites();
+        if (favs[uid]) {
+          delete favs[uid];
+          $star.text('\u2606').removeClass('fav-active');
+          $row.removeClass('fav-row');
+        } else {
+          favs[uid] = true;
+          $star.text('\u2605').addClass('fav-active');
+          $row.addClass('fav-row');
+        }
+        saveFavorites(favs);
+      });
+
+      // --- Favorites filter (server-side) ---
+      window.applyRowFilters = function () {};
+
+      $('#show-favorites-checkbox').on('change', function () {
+        update_ranking({page: 1});
+      });
+
+      // --- Server-side search (debounced via AJAX) ---
+      var _searchTimer = null;
+
+      $('#ranking-search').on('input', function () {
+        clearTimeout(_searchTimer);
+        var val = $(this).val().trim();
+        _searchTimer = setTimeout(function () {
+          window.currentSearch = val;
+          update_ranking({search: val, page: 1});
+        }, 300);
+      });
+
+      $('#ranking-search').on('keydown', function (e) {
+        if (e.key === 'Enter') {
+          clearTimeout(_searchTimer);
+          var val = $(this).val().trim();
+          window.currentSearch = val;
+          update_ranking({search: val, page: 1});
+        }
+      });
+
+      applyFavoriteStars();
+
+      // --- Toggle state persistence ---
+      var TOGGLE_KEY = 'ranking_toggles_' + CONTEST_KEY;
+      var toggleIds = ['show-schools-checkbox', 'show-fullnames-checkbox', 'show-total-score-checkbox', 'disable-animations-checkbox'];
+
+      function saveToggles() {
+        var state = {};
+        toggleIds.forEach(function (id) {
+          state[id] = $('#' + id).is(':checked');
+        });
+        try { sessionStorage.setItem(TOGGLE_KEY, JSON.stringify(state)); } catch (e) {}
+      }
+
+      function restoreToggles() {
+        try {
+          var state = JSON.parse(sessionStorage.getItem(TOGGLE_KEY));
+          if (!state) return;
+          if (state['show-schools-checkbox']) { $('#show-schools-checkbox').prop('checked', true); $('.school').show(); }
+          if (state['show-fullnames-checkbox']) { $('#show-fullnames-checkbox').prop('checked', true); $('.fullname').show(); }
+          if (state['show-total-score-checkbox']) { $('#show-total-score-checkbox').prop('checked', true); $('.problem-score-col').hide(); }
+          if (state['disable-animations-checkbox']) { $('#disable-animations-checkbox').prop('checked', true); }
+        } catch (e) {}
+      }
+
+      restoreToggles();
+      toggleIds.forEach(function (id) {
+        $('#' + id).on('change', saveToggles);
+      });
+
+      // --- Highlight user from ?user= param ---
+      {% if highlight_username %}
+        $(function () {
+          var $row = $('#users-table tbody tr').filter(function () {
+            return $(this).find('.user-name .rating a').first().text().trim() === '{{ highlight_username|escapejs }}';
+          });
+          if ($row.length) {
+            $row.addClass('highlight');
+            $row[0].scrollIntoView({behavior: 'smooth', block: 'center'});
+          }
+        });
+      {% endif %}
+
+      // --- My Rank button ---
+      function scrollToMyRow() {
+        var el = document.querySelector('tr.highlight:not(.pinned-row)');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'center'});
+      }
+
+      $('#my-rank-btn').on('click', function (e) {
+        e.preventDefault();
+        var myPage = parseInt($(this).data('page'));
+        if (myPage === window.currentPage) {
+          scrollToMyRow();
+        } else {
+          update_ranking({page: myPage, onComplete: scrollToMyRow});
+        }
+      });
+    });
+  </script>
+{% endblock %}
+
+{% block before_table %}{% endblock %}
+
+{% block middle_content %}
+  <div class="contest-ranking-page">
+    {% include "contest/contest-datetime.html" %}
+
+    {% if page_type == 'ranking' or page_type == 'final_ranking' %}
+      <div class="ranking-filters-container">
+        <div class="ranking-filters-primary">
+          <div class="ranking-filters-group">
+            <input type="text" id="ranking-search" class="ranking-search-input"
+                   placeholder="{{ _('Search...') }}" value="{{ search_query or '' }}">
+            {% if request.user.is_authenticated %}
+              <label class="filter-option"><input id="show-friends-checkbox" type="checkbox"
+                                                  {{"checked" if friend_only}}>{{ _('Friends') }}</label>
+            {% endif %}
+            <label class="filter-option" id="show-virtual-label"><input id="show-virtual-checkbox"
+                                                                        type="checkbox" {{"checked" if include_virtual}}>{{ _('Virtual') }}</label>
+          </div>
+          <div class="ranking-actions">
+            <i class="fa fa-spinner fa-pulse" style="display: none" id="loading-gif"></i>
+            {% if my_page %}
+              <a class="action-btn small" id="my-rank-btn" href="#" data-page="{{ my_page }}">
+                <i class="fa fa-user"></i> {{ _('My rank') }}</a>
+            {% endif %}
+            <a class="action-btn small"
+               href="?format=csv&friend={{ '1' if friend_only else '0' }}&virtual={{ '1' if include_virtual else '0' }}">
+              <i class="fa fa-download"></i> {{ _('CSV') }}</a>
+          </div>
+        </div>
+        <div class="ranking-filters-display">
+          <label class="filter-option"><input id="show-schools-checkbox" type="checkbox">{{ _('Schools') }}</label>
+          <label class="filter-option"><input id="show-fullnames-checkbox" type="checkbox">{{ _('Full name') }}</label>
+          <label class="filter-option"><input id="show-total-score-checkbox" type="checkbox">{{ _('Score only') }}</label>
+          <label class="filter-option"><input id="show-favorites-checkbox" type="checkbox">{{ _('Favorites') }}</label>
+          <label class="filter-option"><input id="disable-animations-checkbox" type="checkbox">{{ _('No animations') }}</label>
+          {% if can_edit %}
+            <label class="filter-option"><input id="show-admin-checkbox" type="checkbox">{{ _('Admin') }}</label>
+            <button type="button" id="bulk-disqualify-btn" class="action-btn small admin-only-btn" style="display: none;">
+              <i class="fa fa-ban"></i> {{ _('Disqualify') }}
+            </button>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div id="ranking-container">
+      <div class="ranking-table-wrapper">
+        <table id="users-table" class="table striped no-border">
+          {% include "contest/ranking-table.html" %}
+        </table>
+      </div>
+
+      {% if page_obj and page_obj.num_pages > 1 %}
+        <div id="ranking-pagination" style="margin-top:10px;">
+          {% include "list-pages.html" %}
+        </div>
+      {% endif %}
+    </div>
+
+    {% if can_edit %}
+      <div id="bulk-disqualify-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>{{ _('Bulk Disqualify') }}</h3>
+            <button type="button" class="modal-close" id="bulk-disqualify-close">&times;</button>
+          </div>
+          <form method="post" action="{{ url('contest_bulk_disqualify', contest.key) }}">
+            {% csrf_token %}
+            <div class="modal-body">
+              <p>{{ _('Enter usernames to disqualify, separated by spaces, commas, or newlines:') }}</p>
+              <textarea name="usernames" id="bulk-disqualify-usernames" rows="6"
+                        placeholder="{{ _('user1, user2, user3...') }}"></textarea>
+            </div>
+            <div class="modal-footer">
+              <button type="submit" class="action-btn">{{ _('Disqualify') }}</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}
