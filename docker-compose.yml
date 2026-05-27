@@ -1,13 +1,14 @@
 services:
   db:
     image: mariadb:10.11
+    container_name: capyjudge-db
     environment:
       MARIADB_DATABASE: dmoj
       MARIADB_USER: dmoj
       MARIADB_PASSWORD: ${DB_PASSWORD:-dmoj_password_change_me}
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password_change_me}
     volumes:
-      - mariadb_data:/var/lib/mysql
+      - db_data:/var/lib/mysql
     networks:
       - capyjudge-net
     restart: unless-stopped
@@ -19,6 +20,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    container_name: capyjudge-redis
+    volumes:
+      - redis_data:/data
     networks:
       - capyjudge-net
     restart: unless-stopped
@@ -29,9 +33,8 @@ services:
       retries: 5
 
   websocket:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
+    container_name: capyjudge-websocket
     command: node websocket/daemon.js
     environment:
       EVENT_DAEMON_KEY: ${EVENT_DAEMON_KEY:-}
@@ -42,9 +45,8 @@ services:
     restart: unless-stopped
 
   web:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
+    container_name: capyjudge-web
     ports:
       - "${WEB_PORT:-8000}:80"
       - "${BRIDGE_PORT:-9999}:9999"
@@ -83,6 +85,7 @@ services:
 
   judge:
     image: dmoj/judge:latest
+    container_name: capyjudge-judge
     environment:
       JUDGE_NAME: ${JUDGE_NAME:-judge-0}
       BRIDGE_HOST: web
@@ -104,8 +107,9 @@ networks:
     driver: bridge
 
 volumes:
-  mariadb_data:
+  db_data:
+  redis_data:
   static_data:
   media_data:
-  problems_data:
+  problems_data: 
   secrets_data:
