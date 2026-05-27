@@ -26,7 +26,6 @@ chmod 777 /tmp
 chmod 666 /dev/stdout 2>/dev/null || true
 chmod 666 /dev/stderr 2>/dev/null || true
 
-# Ensure directories exist with correct permissions
 mkdir -p /app/static /app/media /problems /data /var/log/nginx /var/lib/nginx /run/nginx /var/log/supervisor
 chown -R www-data:www-data /app/static /app/media /problems /data
 chown -R www-data:www-data /var/log/nginx /var/lib/nginx /run/nginx /var/log/supervisor
@@ -85,7 +84,7 @@ fi
 export SECRET_KEY CHAT_SECRET_KEY EVENT_DAEMON_KEY DB_PASSWORD
 
 # ============================================
-# Install websocket dependencies if missing
+# Install websocket dependencies
 # ============================================
 echo "Checking websocket dependencies..."
 cd /app/websocket
@@ -96,16 +95,17 @@ fi
 cd /app
 
 # ============================================
-# Generate local_settings.py
+# Generate local_settings.py (without compressor)
 # ============================================
 echo "Generating local_settings.py..."
 
 cat > /app/dmoj/local_settings.py << 'EOF'
 import os
 
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+DEBUG = True
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
 ALLOWED_HOSTS = ['*']
+CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'http://127.0.0.1:8000', 'http://10.0.2.15:8000']
 
 SITE_NAME = os.environ.get('SITE_NAME', 'CapyJudge')
 SITE_LONG_NAME = os.environ.get('SITE_LONG_NAME', 'CapyJudge Online Judge')
@@ -146,11 +146,6 @@ EVENT_DAEMON_PUBLIC_URL = os.environ.get('EVENT_DAEMON_PUBLIC_URL', 'http://loca
 CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 
-if not DEBUG:
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-
 CHAT_SECRET_KEY = os.environ.get('CHAT_SECRET_KEY', '')
 
 STATICFILES_FINDERS = [
@@ -171,6 +166,11 @@ LOGGING = {
     },
     'root': {'handlers': ['console', 'file'], 'level': 'INFO'},
 }
+
+# Disable security for testing
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = False
+SECURE_PROXY_SSL_HEADER = None
 EOF
 
 # ============================================
@@ -349,13 +349,6 @@ python manage.py compilejsi18n || true
 # ============================================
 echo "Running migrations..."
 python manage.py migrate --noinput
-
-# Check if database is new
-TABLE_COUNT=$(python manage.py sqlflush 2>/dev/null | grep -c "TRUNCATE" || echo "0")
-if [ "$TABLE_COUNT" -eq 0 ]; then
-    echo "Loading initial data for new database..."
-    python manage.py loaddata navbar language_small demo 2>/dev/null || true
-fi
 
 # Create superuser
 if [ ! -z "$DJANGO_SUPERUSER_USERNAME" ] && [ ! -z "$DJANGO_SUPERUSER_PASSWORD" ]; then
