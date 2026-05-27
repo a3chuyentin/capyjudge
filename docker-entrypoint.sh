@@ -27,10 +27,11 @@ chmod 666 /dev/stdout 2>/dev/null || true
 chmod 666 /dev/stderr 2>/dev/null || true
 
 # Ensure directories exist with correct permissions
-mkdir -p /app/static /app/media /problems /data /var/log/nginx /var/lib/nginx /run/nginx
+mkdir -p /app/static /app/media /problems /data /var/log/nginx /var/lib/nginx /run/nginx /var/log/supervisor
 chown -R www-data:www-data /app/static /app/media /problems /data
-chown -R www-data:www-data /var/log/nginx /var/lib/nginx /run/nginx
+chown -R www-data:www-data /var/log/nginx /var/lib/nginx /run/nginx /var/log/supervisor
 chmod -R 755 /app/static /app/media /problems
+chmod -R 755 /var/log
 
 # ============================================
 # Secrets management
@@ -160,13 +161,19 @@ STATICFILES_FINDERS = [
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
-    'handlers': {'console': {'class': 'logging.StreamHandler'}},
-    'root': {'handlers': ['console'], 'level': 'INFO'},
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler'},
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': '/var/log/django.log',
+        },
+    },
+    'root': {'handlers': ['console', 'file'], 'level': 'INFO'},
 }
 EOF
 
 # ============================================
-# Generate uwsgi.ini (without pidfile and logto)
+# Generate uwsgi.ini
 # ============================================
 echo "Generating uwsgi.ini..."
 
@@ -188,6 +195,8 @@ harakiri = 15
 max-requests = 5000
 vacuum = true
 die-on-term = true
+logto = /var/log/uwsgi.log
+log-reopen = true
 EOF
 
 # ============================================
@@ -199,6 +208,9 @@ cat > /etc/nginx/sites-available/default << 'EOF'
 server {
     listen 80;
     server_name ${SITE_DOMAIN:-localhost};
+    
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
     
     location /static {
         root /app;
@@ -221,7 +233,7 @@ server {
 EOF
 
 # ============================================
-# Generate supervisor configs (with root for site)
+# Generate supervisor configs
 # ============================================
 echo "Generating supervisor configs..."
 
@@ -232,10 +244,10 @@ directory=/app
 user=root
 autostart=true
 autorestart=true
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
+stdout_logfile=/var/log/supervisor/site.log
+stdout_logfile_maxbytes=10MB
+stderr_logfile=/var/log/supervisor/site_error.log
+stderr_logfile_maxbytes=10MB
 EOF
 
 cat > /etc/supervisor/conf.d/bridged.conf << 'EOF'
@@ -245,10 +257,10 @@ directory=/app
 user=www-data
 autostart=true
 autorestart=true
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
+stdout_logfile=/var/log/supervisor/bridged.log
+stdout_logfile_maxbytes=10MB
+stderr_logfile=/var/log/supervisor/bridged_error.log
+stderr_logfile_maxbytes=10MB
 EOF
 
 cat > /etc/supervisor/conf.d/celery.conf << 'EOF'
@@ -258,10 +270,10 @@ directory=/app
 user=www-data
 autostart=true
 autorestart=true
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
+stdout_logfile=/var/log/supervisor/celery.log
+stdout_logfile_maxbytes=10MB
+stderr_logfile=/var/log/supervisor/celery_error.log
+stderr_logfile_maxbytes=10MB
 EOF
 
 cat > /etc/supervisor/conf.d/wsevent.conf << 'EOF'
@@ -271,10 +283,10 @@ directory=/app
 user=www-data
 autostart=true
 autorestart=true
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
+stdout_logfile=/var/log/supervisor/wsevent.log
+stdout_logfile_maxbytes=10MB
+stderr_logfile=/var/log/supervisor/wsevent_error.log
+stderr_logfile_maxbytes=10MB
 EOF
 
 cat > /etc/supervisor/conf.d/nginx.conf << 'EOF'
@@ -282,10 +294,10 @@ cat > /etc/supervisor/conf.d/nginx.conf << 'EOF'
 command=nginx -g "daemon off;"
 autostart=true
 autorestart=true
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
+stdout_logfile=/var/log/supervisor/nginx.log
+stdout_logfile_maxbytes=10MB
+stderr_logfile=/var/log/supervisor/nginx_error.log
+stderr_logfile_maxbytes=10MB
 EOF
 
 # ============================================
@@ -337,7 +349,7 @@ python manage.py compilejsi18n || true
 echo "Running migrations..."
 python manage.py migrate --noinput
 
-# Check if database is new (has no tables)
+# Check if database is new
 TABLE_COUNT=$(python manage.py sqlflush 2>/dev/null | grep -c "TRUNCATE" || echo "0")
 if [ "$TABLE_COUNT" -eq 0 ]; then
     echo "Loading initial data for new database..."
@@ -353,16 +365,15 @@ if [ ! -z "$DJANGO_SUPERUSER_USERNAME" ] && [ ! -z "$DJANGO_SUPERUSER_PASSWORD" 
 fi
 
 # Final permission fix
-chown -R www-data:www-data /app/static /app/media /problems
-chmod -R 755 /app/static /app/media
+chown -R www-data:www-data /app/static /app/media /problems /var/log
+chmod -R 755 /app/static /app/media /var/log
 
 echo "All setup complete"
 
 # ============================================
-# Start supervisor (which will start all services including nginx)
+# Start supervisor
 # ============================================
 echo "Starting supervisor..."
-supervisord -c /etc/supervisor/supervisord.conf
+exec supervisord -n -c /etc/supervisor/supervisord.conf
 
-# Keep container running
 tail -f /dev/null

@@ -40,6 +40,7 @@ services:
       EVENT_DAEMON_KEY: ${EVENT_DAEMON_KEY:-}
     volumes:
       - secrets_data:/data
+      - logs_data:/var/log
     networks:
       - capyjudge-net
     restart: unless-stopped
@@ -51,7 +52,7 @@ services:
       - "${WEB_PORT:-8000}:80"
       - "${BRIDGE_PORT:-9999}:9999"
     environment:
-      - DEBUG=${DEBUG:-False}
+      - DEBUG=${DEBUG:-True}
       - SITE_DOMAIN=${SITE_DOMAIN:-localhost}
       - SITE_NAME=${SITE_NAME:-CapyJudge}
       - DB_HOST=db
@@ -63,15 +64,16 @@ services:
       - EVENT_DAEMON_URL=http://websocket:15100
       - EVENT_DAEMON_KEY=${EVENT_DAEMON_KEY:-}
       - CHAT_SECRET_KEY=${CHAT_SECRET_KEY:-}
-      - DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME:-}
-      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-}
-      - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:-}
+      - DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME:-admin}
+      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-admin123}
+      - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:-admin@capyjudge.com}
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
     volumes:
       - static_data:/app/static
       - media_data:/app/media
       - problems_data:/problems
       - secrets_data:/data
+      - logs_data:/var/log
     depends_on:
       db:
         condition: service_healthy
@@ -93,6 +95,7 @@ services:
     volumes:
       - problems_data:/problems:ro
       - /var/run/docker.sock:/var/run/docker.sock
+      - logs_data:/var/log
     privileged: true
     depends_on:
       - web
@@ -111,5 +114,6 @@ volumes:
   redis_data:
   static_data:
   media_data:
-  problems_data: 
+  problems_data:
   secrets_data:
+  logs_data:
