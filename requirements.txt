@@ -43,3 +43,5 @@ lxml_html_clean
 python-socketio[client]
 fastapi_poe
 xxhash
+pymysql
+mysqlclient

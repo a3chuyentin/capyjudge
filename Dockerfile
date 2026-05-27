@@ -15,17 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Node.js tools
 RUN npm install -g sass postcss-cli postcss autoprefixer
 
-# Copy requirements and install Python packages
+# Copy requirements and install ALL Python packages in one go
 COPY requirements.txt .
-
-# Install pymysql and mysqlclient FIRST (before any Django commands)
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir pymysql && \
-    pip install --no-cache-dir mysqlclient
-
-# Then install remaining dependencies
-RUN pip install --no-cache-dir uwsgi websocket-client && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir uwsgi websocket-client
 
 # Copy source code
 COPY . .
@@ -34,10 +28,10 @@ COPY . .
 RUN python3 -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
-# Install Node dependencies for WebSocket (before compiling assets)
+# Install Node dependencies for WebSocket
 RUN cd websocket && npm install qu ws simplesets
 
-# Compile assets (now pymysql and mysqlclient are available)
+# Compile assets
 RUN ./make_style.sh && \
     python manage.py collectstatic --noinput && \
     python manage.py compilemessages && \
