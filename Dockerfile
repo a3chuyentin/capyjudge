@@ -18,8 +18,10 @@ RUN npm install -g sass postcss-cli postcss autoprefixer
 # Copy requirements and install Python packages
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir mysqlclient uwsgi websocket-client
+    pip install --no-cache-dir pymysql && \
+    pip install --no-cache-dir mysqlclient && \
+    pip install --no-cache-dir uwsgi websocket-client && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
 COPY . .
@@ -28,7 +30,7 @@ COPY . .
 RUN python3 -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
-# Compile assets
+# Compile assets (run after all packages are installed)
 RUN ./make_style.sh && \
     python manage.py collectstatic --noinput && \
     python manage.py compilemessages && \
