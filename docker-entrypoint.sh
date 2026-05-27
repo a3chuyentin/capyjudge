@@ -154,8 +154,13 @@ if os.environ.get('EMAIL_HOST'):
     DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'capyjudge@gmail.com')
 
 # Static files
-STATICFILES_FINDERS += ('compressor.finders.CompressorFinder',)
+STATICFILES_FINDERS = [
+    'django.contrib.staticfiles.finders.FileSystemFinder',
+    'django.contrib.staticfiles.finders.AppDirectoriesFinder',
+    'compressor.finders.CompressorFinder',
+]
 COMPRESS_ENABLED = not DEBUG
+COMPRESS_ROOT = STATIC_ROOT
 
 # Logging
 LOGGING = {
