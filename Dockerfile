@@ -6,7 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ make python3-dev \
     libxml2-dev libxslt1-dev zlib1g-dev \
-    gettext curl pkg-config \
+    gettext curl pkg-config git \
     mariadb-client libmariadb-dev \
     nginx supervisor nodejs npm \
     netcat-openbsd \
@@ -17,8 +17,9 @@ RUN npm install -g sass postcss-cli postcss autoprefixer
 
 # Copy requirements and install Python packages
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install mysqlclient uwsgi websocket-client
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir mysqlclient uwsgi websocket-client
 
 # Copy source code
 COPY . .
