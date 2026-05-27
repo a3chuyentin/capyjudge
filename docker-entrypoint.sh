@@ -363,4 +363,6 @@ echo "All setup complete"
 # ============================================
 echo "Starting supervisor..."
 supervisord -c /etc/supervisor/supervisord.conf
-exec supervisord -n -c /etc/supervisor/supervisord.conf
+
+# Keep container running
+tail -f /dev/null
