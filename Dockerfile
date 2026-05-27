@@ -15,23 +15,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Node.js tools
 RUN npm install -g sass postcss-cli postcss autoprefixer
 
-# Copy requirements and install ALL Python packages in one go
+# Create virtual environment FIRST
+RUN python3 -m venv /venv
+ENV PATH="/venv/bin:$PATH"
+
+# Copy requirements and install packages INTO venv
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir PyMySQL mysqlclient && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir uwsgi websocket-client
 
 # Copy source code
 COPY . .
 
-# Create virtual environment
-RUN python3 -m venv /venv
-ENV PATH="/venv/bin:$PATH"
-
 # Install Node dependencies for WebSocket
 RUN cd websocket && npm install qu ws simplesets
 
-# Compile assets
+# Compile assets (now using venv python)
 RUN ./make_style.sh && \
     python manage.py collectstatic --noinput && \
     python manage.py compilemessages && \
@@ -47,7 +48,6 @@ RUN useradd -m -s /bin/bash www-data && \
     mkdir -p /app/static /app/media /problems /data && \
     chown -R www-data:www-data /app/static /app/media /problems /data
 
-# Remove sample_conf directory if exists
 RUN rm -rf /app/sample_conf 2>/dev/null || true
 
 EXPOSE 80

@@ -3,19 +3,22 @@ set -e
 
 echo "Starting CapyJudge Docker container..."
 
+# Activate virtual environment FIRST
+source /venv/bin/activate
+
 # ============================================
 # Helper functions
 # ============================================
 generate_secret_key() {
-    python3 -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+    python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 }
 
 generate_fernet_key() {
-    python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 }
 
 generate_random_password() {
-    python3 -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
+    python -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
 }
 
 # ============================================
@@ -379,7 +382,7 @@ done
 echo "Database ready"
 
 # ============================================
-# Django setup
+# Django setup (using venv python)
 # ============================================
 echo "Running migrations..."
 python manage.py migrate --noinput
