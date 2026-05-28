@@ -183,7 +183,7 @@ apt-get install -y \
     cmake \
     libpq-dev
 
-apt-get install -y mariadb-server-utils
+apt-get install -y mariadb-server
 
 # Install Node.js 18.x (required for websocket)
 curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
