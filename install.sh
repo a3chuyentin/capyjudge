@@ -35,10 +35,10 @@ log_error() {
 }
 
 # ============================================
-# Helper functions
+# Helper functions (use pure Python, no Django)
 # ============================================
 generate_secret_key() {
-    python3 -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+    python3 -c "import secrets; import string; chars = string.ascii_letters + string.digits + string.punctuation; print(''.join(secrets.choice(chars) for _ in range(50)))"
 }
 
 generate_fernet_key() {
@@ -159,9 +159,9 @@ EOF
 }
 
 # ============================================
-# Step 0: System Prerequisites
+# Step 0: System Prerequisites & Virtual Environment
 # ============================================
-log_info "Step 0: Installing system dependencies..."
+log_info "Step 0: Installing system dependencies and setting up virtual environment..."
 
 # Update package list
 apt-get update -y
@@ -169,7 +169,7 @@ apt-get update -y
 # Install essential packages
 apt-get install -y \
     git curl wget gnupg lsb-release ca-certificates \
-    python3 python3-pip python3-dev python3-venv \
+    python3 python3-pip python3-dev python3-venv python3-full \
     gcc g++ gcc-12 g++-12 make \
     libxml2-dev libxslt1-dev zlib1g-dev \
     gettext pkg-config \
@@ -195,12 +195,12 @@ apt-get install -y nodejs
 # Install Node.js global tools
 npm install -g sass postcss-cli postcss autoprefixer
 
-log_info "System dependencies installed successfully"
+log_info "System dependencies installed"
 
 # ============================================
-# Step 1: Create User and Group
+# Step 0a: Create User and Group
 # ============================================
-log_info "Step 1: Creating capyjudge user and group..."
+log_info "Creating capyjudge user and group..."
 
 # Create group if not exists
 if ! getent group "${APP_GROUP}" > /dev/null 2>&1; then
@@ -220,9 +220,9 @@ usermod -a -G "${APP_GROUP}" www-data
 log_info "User and group setup complete"
 
 # ============================================
-# Step 2: Create Directory Structure
+# Step 0b: Create Directory Structure
 # ============================================
-log_info "Step 2: Creating directory structure..."
+log_info "Creating directory structure..."
 
 # Create directories
 mkdir -p "${DATA_DIR}"/{static,media,problems,secrets,cache,logs}
@@ -239,9 +239,9 @@ chmod 755 "${DATA_DIR}" "${LOG_DIR}" /run/nginx
 log_info "Directory structure created"
 
 # ============================================
-# Step 3: Clone Repository
+# Step 0c: Clone Repository
 # ============================================
-log_info "Step 3: Cloning CapyJudge repository..."
+log_info "Cloning CapyJudge repository..."
 
 if [ -d "${APP_DIR}/.git" ]; then
     log_warn "Repository already exists, pulling latest changes"
@@ -260,9 +260,38 @@ fi
 cd "${APP_DIR}"
 
 # ============================================
-# Step 4: Check or Create .env file
+# Step 0d: Setup Virtual Environment & Install Dependencies
 # ============================================
-log_info "Step 4: Checking for .env file..."
+log_info "Setting up Python virtual environment..."
+
+# Create virtual environment
+if [ ! -d "${APP_HOME}/venv" ]; then
+    sudo -u "${APP_USER}" python3 -m venv "${APP_HOME}/venv"
+    log_info "Virtual environment created"
+fi
+
+# Install all Python dependencies in venv
+sudo -u "${APP_USER}" bash << EOF
+source ${APP_HOME}/venv/bin/activate
+pip install --upgrade pip
+if [ -f "${APP_DIR}/requirements.txt" ]; then
+    pip install -r "${APP_DIR}/requirements.txt"
+fi
+pip install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages
+pre-commit install
+EOF
+
+# Install Node dependencies for websocket
+cd "${APP_DIR}/websocket"
+sudo -u "${APP_USER}" npm install express socket.io qu ws simplesets
+cd "${APP_DIR}"
+
+log_info "All dependencies installed"
+
+# ============================================
+# Step 4: Check or Create .env file (NOW Django is available)
+# ============================================
+log_info "Checking for .env file..."
 
 # Create .env.example if not exists
 if [ ! -f "${ENV_EXAMPLE}" ]; then
@@ -288,7 +317,7 @@ DEBUG=False
 SITE_DOMAIN=localhost
 SITE_NAME=CapyJudge
 
-# Security (generate with: python3 -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())")
+# Security (Django will generate these automatically)
 SECRET_KEY=your-secret-key-here
 CHAT_SECRET_KEY=your-fernet-key-here
 EVENT_DAEMON_KEY=your-event-key-here
@@ -307,7 +336,7 @@ EOF
     chown "${APP_USER}:${APP_GROUP}" "${ENV_EXAMPLE}"
 fi
 
-# Load existing .env or create new one
+# Load existing .env or create new one (now Django is available for key generation)
 if load_env_file; then
     log_info "Using existing .env configuration"
 else
@@ -317,37 +346,9 @@ else
 fi
 
 # ============================================
-# Step 5: Setup Virtual Environment & Dependencies
+# Step 5: Setup MySQL Database with Timezone
 # ============================================
-log_info "Step 5: Setting up Python virtual environment..."
-
-# Create virtual environment
-if [ ! -d "${APP_HOME}/venv" ]; then
-    sudo -u "${APP_USER}" python3 -m venv "${APP_HOME}/venv"
-fi
-
-# Install requirements
-sudo -u "${APP_USER}" bash << EOF
-source ${APP_HOME}/venv/bin/activate
-pip install --upgrade pip
-if [ -f "${APP_DIR}/requirements.txt" ]; then
-    pip install -r "${APP_DIR}/requirements.txt"
-fi
-pip install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages
-pre-commit install
-EOF
-
-# Install Node dependencies for websocket
-cd "${APP_DIR}/websocket"
-sudo -u "${APP_USER}" npm install express socket.io qu ws simplesets
-cd "${APP_DIR}"
-
-log_info "Dependencies installed"
-
-# ============================================
-# Step 6: Setup MySQL Database with Timezone
-# ============================================
-log_info "Step 6: Configuring MySQL/MariaDB database..."
+log_info "Configuring MySQL/MariaDB database..."
 
 # Start MariaDB service
 systemctl start mariadb
@@ -369,9 +370,9 @@ mysql -u root -e "FLUSH TABLES;" mysql 2>/dev/null || true
 log_info "Database configured successfully"
 
 # ============================================
-# Step 7: Setup Redis and Memcached
+# Step 6: Setup Redis and Memcached
 # ============================================
-log_info "Step 7: Configuring Redis and Memcached..."
+log_info "Configuring Redis and Memcached..."
 
 # Configure Redis
 cat > /etc/redis/redis.conf.d/99-capyjudge.conf << EOF
@@ -395,9 +396,9 @@ systemctl enable memcached
 log_info "Redis and Memcached configured"
 
 # ============================================
-# Step 8: Generate Django Configuration
+# Step 7: Generate Django Configuration
 # ============================================
-log_info "Step 8: Generating Django local_settings.py..."
+log_info "Generating Django local_settings.py..."
 
 # Create local_settings.py with all required settings
 cat > "${APP_DIR}/dmoj/local_settings.py" << EOF
@@ -572,9 +573,9 @@ EOF
 log_info "Configuration files generated"
 
 # ============================================
-# Step 9: Setup Nginx with Profile Images Support
+# Step 8: Setup Nginx with Profile Images Support
 # ============================================
-log_info "Step 9: Configuring Nginx..."
+log_info "Configuring Nginx..."
 
 cat > /etc/nginx/sites-available/capyjudge << EOF
 server {
@@ -661,9 +662,9 @@ nginx -t
 log_info "Nginx configured successfully"
 
 # ============================================
-# Step 10: Setup Supervisor for All Services
+# Step 9: Setup Supervisor for All Services
 # ============================================
-log_info "Step 10: Configuring Supervisor..."
+log_info "Configuring Supervisor..."
 
 # Site (uWSGI)
 cat > /etc/supervisor/conf.d/capyjudge-site.conf << EOF
@@ -727,9 +728,9 @@ EOF
 log_info "Supervisor configurations created"
 
 # ============================================
-# Step 11: Django Initialization
+# Step 10: Django Initialization
 # ============================================
-log_info "Step 11: Running Django setup..."
+log_info "Running Django setup..."
 
 cd "${APP_DIR}"
 
@@ -778,9 +779,9 @@ EOF
 log_info "Django initialization complete"
 
 # ============================================
-# Step 12: Start Services
+# Step 11: Start Services
 # ============================================
-log_info "Step 12: Starting all services..."
+log_info "Starting all services..."
 
 # Reload systemd
 systemctl daemon-reload
@@ -809,9 +810,9 @@ supervisorctl start all
 log_info "All services started"
 
 # ============================================
-# Step 13: Final Permissions and Cleanup
+# Step 12: Final Permissions and Cleanup
 # ============================================
-log_info "Step 13: Final permissions check..."
+log_info "Final permissions check..."
 
 # Ensure all directories have correct permissions
 chown -R "${APP_USER}:${APP_GROUP}" "${DATA_DIR}" "${LOG_DIR}" "${APP_DIR}"
