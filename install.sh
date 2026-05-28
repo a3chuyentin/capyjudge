@@ -264,6 +264,18 @@ cd "${APP_DIR}"
 # ============================================
 log_info "Setting up Python virtual environment..."
 
+sudo apt-get install -y \
+    libcrypt-dev \
+    libssl-dev \
+    libffi-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    libjpeg-dev \
+    libz-dev \
+    build-essential \
+    python3-dev \
+    pkg-config
+
 # Create virtual environment
 if [ ! -d "${APP_HOME}/venv" ]; then
     sudo -u "${APP_USER}" python3 -m venv "${APP_HOME}/venv"
@@ -273,7 +285,7 @@ fi
 # Install all Python dependencies in venv
 sudo -u "${APP_USER}" bash << EOF
 source ${APP_HOME}/venv/bin/activate
-pip install --upgrade pip
+pip install --upgrade pip setuptools wheel
 if [ -f "${APP_DIR}/requirements.txt" ]; then
     pip install -r "${APP_DIR}/requirements.txt"
 fi
