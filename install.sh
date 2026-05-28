@@ -195,19 +195,6 @@ apt-get install -y nodejs
 # Install Node.js global tools
 npm install -g sass postcss-cli postcss autoprefixer
 
-# Upgrade pip
-pip3 install --upgrade pip
-
-# Install Python packages globally (some are needed for setup)
-pip3 install \
-    PyMySQL mysqlclient \
-    uwsgi websocket-client \
-    celery redis \
-    django-compressor \
-    cryptography \
-    boto3 django-storages \
-    pre-commit
-
 log_info "System dependencies installed successfully"
 
 # ============================================
