@@ -68,7 +68,7 @@ create_env_file() {
     DB_PASSWORD="${DB_PASSWORD:-$(generate_random_password)}"
     DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-$(generate_random_password)}"
     SECRET_KEY="${SECRET_KEY:-$(generate_secret_key)}"
-    CHAT_SECRET_KEY="${CHAT_SECRET_KEY:-$(generate_fernet_key)}"
+    CHAT_SECRET_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
     EVENT_DAEMON_KEY="${EVENT_DAEMON_KEY:-$(generate_random_password)}"
     
     # Save secrets to files for persistence
@@ -78,80 +78,75 @@ create_env_file() {
     echo "$EVENT_DAEMON_KEY" > "${DATA_DIR}/secrets/EVENT_DAEMON_KEY"
     echo "$DB_PASSWORD" > "${DATA_DIR}/secrets/DB_PASSWORD"
     
-    cat > "$ENV_FILE" << EOF
+    cat > "$ENV_FILE" << 'ENVEOF'
 # ============================================
 # Ports configuration
 # ============================================
-WEB_PORT=${WEB_PORT:-80}
-BRIDGE_PORT=${BRIDGE_PORT:-9999}
-WEBSOCKET_PORT=${WEBSOCKET_PORT:-15100}
+WEB_PORT=80
+BRIDGE_PORT=9999
+WEBSOCKET_PORT=15100
 
 # ============================================
 # Database (required)
 # ============================================
-DB_NAME=${DB_NAME:-capyjudge}
-DB_USER=${DB_USER:-capyjudge}
-DB_PASSWORD=${DB_PASSWORD}
-DB_HOST=${DB_HOST:-localhost}
-DB_PORT=${DB_PORT:-3306}
-DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+DB_NAME=capyjudge
+DB_USER=capyjudge
+DB_PASSWORD=CHANGE_ME
+DB_HOST=localhost
+DB_PORT=3306
+DB_ROOT_PASSWORD=CHANGE_ME
 
 # ============================================
 # Django
 # ============================================
-DEBUG=${DEBUG:-False}
-SITE_DOMAIN=${SITE_DOMAIN:-localhost}
-SITE_NAME=${SITE_NAME:-CapyJudge}
-SITE_LONG_NAME=${SITE_LONG_NAME:-CapyJudge Online Judge}
-SITE_ADMIN_EMAIL=${SITE_ADMIN_EMAIL:-admin@capyjudge.com}
+DEBUG=False
+SITE_DOMAIN=localhost
+SITE_NAME=CapyJudge
+SITE_LONG_NAME=CapyJudge Online Judge
+SITE_ADMIN_EMAIL=admin@capyjudge.com
 
 # ============================================
 # Superuser (optional - auto create)
 # ============================================
-DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME:-admin}
-DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-admin123}
-DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:-capyjudge@gmail.com}
+DJANGO_SUPERUSER_USERNAME=admin
+DJANGO_SUPERUSER_PASSWORD=admin123
+DJANGO_SUPERUSER_EMAIL=capyjudge@gmail.com
 
 # ============================================
 # Redis & Cache
 # ============================================
-REDIS_URL=${REDIS_URL:-redis://localhost:6379/0}
-MEMCACHED_URL=${MEMCACHED_URL:-127.0.0.1:11211}
+REDIS_URL=redis://localhost:6379/0
+MEMCACHED_URL=127.0.0.1:11211
 
 # ============================================
 # Judge (optional)
 # ============================================
-JUDGE_NAME=${JUDGE_NAME:-judge-0}
-CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
-
-# ============================================
-# Email (optional)
-# ============================================
-# EMAIL_HOST=smtp.gmail.com
-# EMAIL_PORT=587
-# EMAIL_HOST_USER=capyjudge@gmail.com
-# EMAIL_HOST_PASSWORD=your-app-password
-# EMAIL_USE_TLS=True
-# DEFAULT_FROM_EMAIL=capyjudge@gmail.com
+JUDGE_NAME=judge-0
+CELERY_CONCURRENCY=2
 
 # ============================================
 # Security Keys (auto-generated)
 # ============================================
-SECRET_KEY=${SECRET_KEY}
-CHAT_SECRET_KEY=${CHAT_SECRET_KEY}
-EVENT_DAEMON_KEY=${EVENT_DAEMON_KEY}
+ENVEOF
+
+    # Append keys without using EOF with variable substitution
+    echo "SECRET_KEY=${SECRET_KEY}" >> "$ENV_FILE"
+    echo "CHAT_SECRET_KEY=${CHAT_SECRET_KEY}" >> "$ENV_FILE"
+    echo "EVENT_DAEMON_KEY=${EVENT_DAEMON_KEY}" >> "$ENV_FILE"
+    
+    cat >> "$ENV_FILE" << 'ENVEOF'
 
 # ============================================
 # Event Daemon
 # ============================================
-EVENT_DAEMON_URL=http://localhost:${WEBSOCKET_PORT:-15100}
-EVENT_DAEMON_PUBLIC_URL=http://${SITE_DOMAIN:-localhost}:${WEBSOCKET_PORT:-15100}
+EVENT_DAEMON_URL=http://localhost:15100
+EVENT_DAEMON_PUBLIC_URL=http://localhost:15100
 
 # ============================================
 # Organization Subdomain (optional)
 # ============================================
 # USE_SUBDOMAIN=False
-EOF
+ENVEOF
 
     chown "${APP_USER}:${APP_GROUP}" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
@@ -187,6 +182,8 @@ apt-get install -y \
     automake \
     cmake \
     libpq-dev
+
+apt-get install -y mariadb-server-utils
 
 # Install Node.js 18.x (required for websocket)
 curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
@@ -376,7 +373,14 @@ FLUSH PRIVILEGES;
 EOF
 
 # Setup timezone data for MySQL
-mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -u root mysql 2>/dev/null || true
+if command -v mysql_tzinfo_to_sql > /dev/null 2>&1; then
+    mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -u root mysql 2>/dev/null || true
+else
+    log_warn "mysql_tzinfo_to_sql not found, skipping timezone setup"
+    # Alternative method
+    mysql -u root -e "USE mysql; CREATE TABLE IF NOT EXISTS time_zone (Time_zone_id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY, Use_leap_seconds ENUM('Y','N') NOT NULL DEFAULT 'N') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;" 2>/dev/null || true
+fi
+
 mysql -u root -e "FLUSH TABLES;" mysql 2>/dev/null || true
 
 log_info "Database configured successfully"
@@ -387,6 +391,7 @@ log_info "Database configured successfully"
 log_info "Configuring Redis and Memcached..."
 
 # Configure Redis
+mkdir -p /etc/redis/redis.conf.d/
 cat > /etc/redis/redis.conf.d/99-capyjudge.conf << EOF
 maxmemory 256mb
 maxmemory-policy allkeys-lru
@@ -394,6 +399,14 @@ save 900 1
 save 300 10
 save 60 10000
 EOF
+
+# Or append directly to redis.conf if directory doesn't work
+if [ ! -d "/etc/redis/redis.conf.d" ]; then
+    echo "" >> /etc/redis/redis.conf
+    echo "# CapyJudge Settings" >> /etc/redis/redis.conf
+    echo "maxmemory 256mb" >> /etc/redis/redis.conf
+    echo "maxmemory-policy allkeys-lru" >> /etc/redis/redis.conf
+fi
 
 # Configure Memcached
 sed -i 's/-m 64/-m 256/' /etc/memcached.conf
