@@ -5,23 +5,64 @@ set -e
 # CapyJudge All-in-One Installation Script
 # Based on LQDOJ/DMOJ architecture
 # ============================================
+#
+# This script automates the complete deployment of a CapyJudge Online Judge system.
+# It handles system dependencies, database setup, service configuration, and
+# initial application deployment.
+#
+# Prerequisites:
+#   - Ubuntu 20.04/22.04/24.04 LTS (or compatible Debian-based distribution)
+#   - Fresh installation recommended
+#   - Minimum 2GB RAM, 10GB free disk space
+#   - Internet connection for package downloads
+#
+# What this script does:
+#   1. Installs all required system packages and dependencies
+#   2. Creates dedicated system user and directory structure
+#   3. Clones the CapyJudge repository
+#   4. Sets up Python virtual environment with all Python packages
+#   5. Configures MySQL/MariaDB database with dedicated user
+#   6. Sets up Redis for caching and Celery message broker
+#   7. Configures Memcached for Django caching
+#   8. Generates all necessary configuration files (Django, uWSGI, Nginx, Supervisor)
+#   9. Runs Django migrations and loads initial data
+#  10. Starts and enables all services
+#
+# Post-installation manual steps:
+#   - Create a superuser account for admin access
+#   - Configure SSL/TLS certificates for production use
+#   - Set up judge workers (separate installation)
+#   - Configure email backend for user notifications
+#   - Review and adjust security settings in local_settings.py
+# ============================================
 
-# Configuration
+# ============================================
+# Environment Configuration
+# ============================================
+# These variables define the core deployment paths and user/group names.
+# Modify with caution, as they affect the entire installation structure.
+
+# Application user and group ownership
 APP_USER="capyjudge"
 APP_GROUP="capyjudge"
+
+# Base directories for application, data, and logs
 APP_HOME="/home/capyjudge"
 APP_DIR="${APP_HOME}/capyjudge"
 DATA_DIR="${APP_HOME}/capyjudge-data"
 LOG_DIR="${APP_HOME}/logs"
-ENV_FILE="${APP_DIR}/.env"
-ENV_EXAMPLE="${APP_DIR}/.env.example"
 
-# Colors for output
+# ============================================
+# Output Formatting
+# ============================================
+# Color codes for structured, readable console output
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
+# Logging helper functions for standardized output
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
@@ -35,29 +76,43 @@ log_error() {
 }
 
 # ============================================
-# Helper functions (use pure Python, no Django)
+# Helper Functions
 # ============================================
+# Cryptographic key generation utilities for securing the application
+
+# Generates a 50-character random secret key for Django SECRET_KEY
 generate_secret_key() {
-    python -c "import secrets; import string; chars = string.ascii_letters + string.digits + string.punctuation; print(''.join(secrets.choice(chars) for _ in range(50)))"
+    "${APP_HOME}/venv/bin/python3" -c "
+import secrets
+import string
+chars = string.ascii_letters + string.digits + '!@#\$%^&*()-_=+[]{}|;:,.<>?'
+print(''.join(secrets.choice(chars) for _ in range(50)))
+"
 }
 
+# Generates a Fernet encryption key for chat message encryption
 generate_fernet_key() {
-    python -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
+    "${APP_HOME}/venv/bin/python3" -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
 }
 
+# Generates a 32-character random password for database and service credentials
 generate_random_password() {
-    python -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
+    "${APP_HOME}/venv/bin/python3" -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
 }
 
 # ============================================
 # Step 0: System Prerequisites & Virtual Environment
 # ============================================
-log_info "Step 0: Installing system dependencies and setting up virtual environment..."
+# Installs all required system packages including Python, compilers,
+# database clients, and development libraries necessary for building
+# Python packages with native extensions.
 
-# Update package list
+log_info "Step 0: Installing system dependencies..."
+
+# Update package lists to ensure latest versions are available
 sudo apt-get update -y
 
-# Install essential packages
+# Core system utilities and build tools
 sudo apt-get install -y \
     git curl wget gnupg lsb-release ca-certificates \
     python3 python3-pip python3-dev python3-venv python3-full \
@@ -66,7 +121,6 @@ sudo apt-get install -y \
     gettext pkg-config \
     mariadb-client libmariadb-dev \
     nginx supervisor \
-    nodejs npm \
     netcat-openbsd \
     redis-server \
     mariadb-server \
@@ -78,49 +132,49 @@ sudo apt-get install -y \
     automake \
     cmake \
     libpq-dev \
-	unzip 
+    unzip \
+    mariadb-client-compat
 
-# Check if npm is already installed
+# Install Node.js and npm via nvm for frontend asset compilation
+# Check if npm is already installed to avoid redundant installation
 if command -v npm &> /dev/null; then
     NPM_VERSION=$(npm --version)
     NODE_VERSION=$(node --version)
     log_info "npm ${NPM_VERSION} (Node.js ${NODE_VERSION}) already installed, skipping installation"
 else
     log_info "Installing Node.js and npm..."
-    
-    # Download and install nvm:
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
-    # in lieu of restarting the shell
     \. "$HOME/.nvm/nvm.sh"
-    # Download and install Node.js:
     nvm install 24
-    
     log_info "Node.js and npm installed successfully"
 fi
 
-# Install Node.js global tools
+# Global npm packages for SCSS and PostCSS processing
 npm install -g sass postcss-cli postcss autoprefixer
 
 log_info "System dependencies installed"
 
 # ============================================
-# Step 0a: Create User and Group
+# Step 0a: Create System User and Group
 # ============================================
+# Creates a dedicated unprivileged user account for running the application,
+# enhancing security by isolating the judge processes from the system.
+
 log_info "Creating capyjudge user and group..."
 
-# Create group if not exists
+# Create group if it doesn't already exist
 if ! getent group "${APP_GROUP}" > /dev/null 2>&1; then
     groupadd "${APP_GROUP}"
     log_info "Group ${APP_GROUP} created"
 fi
 
-# Create user if not exists
+# Create user with home directory and assign to the application group
 if ! id "${APP_USER}" > /dev/null 2>&1; then
     useradd -m -g "${APP_GROUP}" -s /bin/bash "${APP_USER}"
     log_info "User ${APP_USER} created"
 fi
 
-# Add nginx user to app group
+# Add www-data (Nginx user) to the application group for socket/file access
 usermod -a -G "${APP_GROUP}" www-data
 
 log_info "User and group setup complete"
@@ -128,31 +182,44 @@ log_info "User and group setup complete"
 # ============================================
 # Step 0b: Create Directory Structure
 # ============================================
+# Establishes the complete directory hierarchy for application data,
+# problem files, static assets, and log storage with proper permissions.
+
 log_info "Creating directory structure..."
 
-# Create directories
+# Application data directories
 mkdir -p "${DATA_DIR}"/{static,media,problems,secrets,cache,logs}
+# Configuration directory for problem metadata
 mkdir -p "${DATA_DIR}/problems/__conf__"
+# Log directories for all services
 mkdir -p "${LOG_DIR}"/{nginx,supervisor,uwsgi,django,celery,websocket,redis,memcached}
+# Application source directory
 mkdir -p "${APP_DIR}"
+# Nginx runtime directories
 mkdir -p /run/nginx /var/log/nginx
 
-# Set ownership
+# Set ownership to application user for security
 chown -R "${APP_USER}:${APP_GROUP}" "${DATA_DIR}" "${LOG_DIR}" "${APP_DIR}"
+# Nginx requires write access to its runtime directories
 chown -R www-data:www-data /var/log/nginx /run/nginx
 chmod 755 "${DATA_DIR}" "${LOG_DIR}" /run/nginx
 
 log_info "Directory structure created"
 
 # ============================================
-# Step 0c: Clone Repository
+# Step 0c: Clone Application Repository
 # ============================================
+# Retrieves the CapyJudge source code from GitHub. If the repository
+# already exists, it pulls the latest changes and updates submodules
+# to ensure the installation is current.
+
 log_info "Cloning CapyJudge repository..."
 
 if [ -d "${APP_DIR}/.git" ]; then
     log_warn "Repository already exists, pulling latest changes"
     cd "${APP_DIR}"
     sudo -u "${APP_USER}" git pull
+    # Initialize and update git submodules (e.g., for translations or plugins)
     sudo -u "${APP_USER}" git submodule init
     sudo -u "${APP_USER}" git submodule update
 else
@@ -168,40 +235,39 @@ cd "${APP_DIR}"
 # ============================================
 # Step 0d: Setup Virtual Environment & Install Dependencies
 # ============================================
+# Creates an isolated Python environment to avoid conflicts with system
+# packages. Installs all required Python packages from requirements.txt
+# and additional deployment-specific dependencies.
+
 log_info "Setting up Python virtual environment..."
 
+# Install build dependencies required for compiling Python packages with C extensions
 sudo apt-get install -y \
-    libcrypt-dev \
-    libssl-dev \
-    libffi-dev \
-    libxml2-dev \
-    libxslt1-dev \
-    libjpeg-dev \
-    libz-dev \
-    build-essential \
-    python3-dev \
-    pkg-config
+    libcrypt-dev libssl-dev libffi-dev libxml2-dev libxslt1-dev \
+    libjpeg-dev libz-dev build-essential python3-dev pkg-config
 
-# Create virtual environment
+# Create virtual environment if it doesn't exist
 if [ ! -d "${APP_HOME}/venv" ]; then
-    sudo -u "${APP_USER}" python -m venv "${APP_HOME}/venv"
+    sudo -u "${APP_USER}" python3 -m venv "${APP_HOME}/venv"
     log_info "Virtual environment created"
 fi
 
-# Install all Python dependencies in venv
+# Install Python dependencies as the application user
 sudo -u "${APP_USER}" bash << EOF
 source ${APP_HOME}/venv/bin/activate
+# Upgrade core packaging tools
 pip install --upgrade pip setuptools wheel
+# Install project requirements
 if [ -f "${APP_DIR}/requirements.txt" ]; then
     pip install -r "${APP_DIR}/requirements.txt"
 fi
-pip install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages cryptography
+# Install additional production deployment packages
+pip install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages
+# Set up pre-commit hooks for code quality (optional, for development)
 pre-commit install
 EOF
 
-source "${APP_HOME}"/venv/bin/activate
-
-# Install Node dependencies for websocket
+# Install Node.js dependencies for the WebSocket server
 cd "${APP_DIR}/websocket"
 sudo -u "${APP_USER}" npm install express socket.io qu ws simplesets
 cd "${APP_DIR}"
@@ -209,18 +275,79 @@ cd "${APP_DIR}"
 log_info "All dependencies installed"
 
 # ============================================
-# Generate configuration values using helpers
+# Environment Configuration Loading
 # ============================================
+# Checks for existing .env file with configuration variables.
+# If not found, creates one from the example template and prompts
+# the user to review and customize settings.
+
+log_info "Checking for .env file..."
+
+if [ -f "${APP_DIR}/.env" ]; then
+    log_info "Found existing .env file, loading configuration..."
+    # Clean up any heredoc artifacts that might have been accidentally saved
+    sed -i '/^EOF$/d' "${APP_DIR}/.env" 2>/dev/null || true
+    # Load environment variables into current shell session
+    set -a
+    source "${APP_DIR}/.env"
+    set +a
+    log_info "Loaded configuration from .env file"
+elif [ -f "${APP_DIR}/.env.example" ]; then
+    log_info "No .env file found, creating from .env.example..."
+    cp "${APP_DIR}/.env.example" "${APP_DIR}/.env"
+    sed -i '/^EOF$/d' "${APP_DIR}/.env" 2>/dev/null || true
+    
+    # Prompt user to edit the .env file for custom configuration
+    echo ""
+    echo -e "${YELLOW}========================================${NC}"
+    echo -e "${YELLOW}  Do you want to edit .env file now?${NC}"
+    echo -e "${YELLOW}  (Recommended to set your custom values)${NC}"
+    echo -e "${YELLOW}========================================${NC}"
+    read -p "Edit .env file? [Y/n]: " -n 1 -r
+    echo ""
+    
+    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+        # Open with available text editor
+        if command -v nano &> /dev/null; then
+            nano "${APP_DIR}/.env"
+        elif command -v vim &> /dev/null; then
+            vim "${APP_DIR}/.env"
+        else
+            log_warn "No text editor found. Please edit ${APP_DIR}/.env manually later."
+        fi
+        sed -i '/^EOF$/d' "${APP_DIR}/.env" 2>/dev/null || true
+    else
+        log_info "Skipping .env editing. You can edit it later at: ${APP_DIR}/.env"
+    fi
+    
+    # Load the configuration after potential editing
+    set -a
+    source "${APP_DIR}/.env" 2>/dev/null || {
+        log_error "Failed to load .env file. Please check syntax."
+        exit 1
+    }
+    set +a
+    log_info "Loaded configuration from .env file"
+else
+    log_warn "No .env.example found, will use default values"
+fi
+
+# ============================================
+# Configuration Value Generation
+# ============================================
+# Generates cryptographic keys and passwords. Values from .env file
+# take precedence; if not specified, secure random values are generated.
+
 log_info "Generating configuration values..."
 
-# Generate secret keys
-SECRET_KEY=$(generate_secret_key)
-EVENT_DAEMON_KEY=$(generate_random_password)
-CHAT_SECRET_KEY=$(generate_fernet_key)
-DB_PASSWORD=$(generate_random_password)
-FERNET_KEY=$(generate_fernet_key)
+# Generate secrets, giving priority to values from .env file
+SECRET_KEY="${SECRET_KEY:-$(generate_secret_key)}"
+EVENT_DAEMON_KEY="${EVENT_DAEMON_KEY:-$(generate_random_password)}"
+CHAT_SECRET_KEY="${CHAT_SECRET_KEY:-$(generate_fernet_key)}"
+DB_PASSWORD="${DB_PASSWORD:-$(generate_random_password)}"
+FERNET_KEY="${FERNET_KEY:-$(generate_fernet_key)}"
 
-# Set configuration values
+# Set configuration values with defaults if not specified in .env
 DB_NAME="${DB_NAME:-capyjudge}"
 DB_USER="${DB_USER:-capyjudge}"
 DB_HOST="${DB_HOST:-localhost}"
@@ -232,17 +359,14 @@ SITE_DOMAIN="${SITE_DOMAIN:-localhost}"
 SITE_NAME="${SITE_NAME:-CapyJudge}"
 SITE_LONG_NAME="${SITE_LONG_NAME:-CapyJudge Online Judge}"
 SITE_ADMIN_EMAIL="${SITE_ADMIN_EMAIL:-admin@localhost}"
-DJANGO_SUPERUSER_USERNAME="${DJANGO_SUPERUSER_USERNAME:-admin}"
-DJANGO_SUPERUSER_PASSWORD="${DJANGO_SUPERUSER_PASSWORD:-admin123}"
-DJANGO_SUPERUSER_EMAIL="${DJANGO_SUPERUSER_EMAIL:-admin@capyjudge.com}"
 DEBUG="${DEBUG:-False}"
 
-# Save secrets to file
+# Save all generated credentials to a secure file for reference
 mkdir -p "${DATA_DIR}/secrets"
 cat > "${DATA_DIR}/secrets/credentials.txt" << EOF
 # CapyJudge Credentials
 # Generated on $(date)
-# Keep this file secure!
+# Keep this file secure and do not share!
 
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
@@ -255,48 +379,107 @@ EVENT_DAEMON_KEY=${EVENT_DAEMON_KEY}
 CHAT_SECRET_KEY=${CHAT_SECRET_KEY}
 FERNET_KEY=${FERNET_KEY}
 
-DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME}
-DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD}
-DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL}
-
 WEB_PORT=${WEB_PORT}
 BRIDGE_PORT=${BRIDGE_PORT}
 WEBSOCKET_PORT=${WEBSOCKET_PORT}
 SITE_DOMAIN=${SITE_DOMAIN}
 EOF
 
+# Restrict access to credentials file
 chmod 600 "${DATA_DIR}/secrets/credentials.txt"
 chown "${APP_USER}:${APP_GROUP}" "${DATA_DIR}/secrets/credentials.txt"
 
 log_info "Configuration values generated and saved"
 
 # ============================================
-# Step 5: Setup MySQL Database with Timezone
+# Step 5: Setup MySQL/MariaDB Database
 # ============================================
+# Configures the database server, creates the application database,
+# and sets up a dedicated user with appropriate privileges.
+# Also imports timezone data for proper time handling.
+
 log_info "Configuring MySQL/MariaDB database..."
 
-# Start MariaDB service
+# Start and enable the database service
 systemctl start mariadb
 systemctl enable mariadb
 
-# Create database, user, and setup timezone
-mysql << EOF
+# Wait for database server to be ready before proceeding
+log_info "Waiting for MariaDB to be ready..."
+for i in {1..30}; do
+    if mysqladmin ping -u root --silent 2>/dev/null; then
+        log_info "MariaDB is ready!"
+        break
+    fi
+    log_info "Waiting for MariaDB... (${i}/30)"
+    sleep 1
+done
+
+# Create the application database and user
+log_info "Creating database and user..."
+mysql -u root << EOF
 CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
+DROP USER IF EXISTS '${DB_USER}'@'localhost';
+CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
 GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';
 GRANT ALL PRIVILEGES ON test_${DB_NAME}.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
-# Setup timezone data for MySQL
-if command -v mysql_tzinfo_to_sql > /dev/null 2>&1; then
-    mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -u root mysql 2>/dev/null || true
+# Verify database connectivity with the new user
+log_info "Verifying database connection..."
+DB_CONNECTION_OK=false
+
+if mysql -u "${DB_USER}" -p"${DB_PASSWORD}" -e "SELECT 1;" "${DB_NAME}" 2>/dev/null; then
+    log_info "Database connection verified successfully"
+    DB_CONNECTION_OK=true
 else
-    log_warn "mysql_tzinfo_to_sql not found, skipping timezone setup"
-    # Alternative method
-    mysql -u root -e "USE mysql; CREATE TABLE IF NOT EXISTS time_zone (Time_zone_id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY, Use_leap_seconds ENUM('Y','N') NOT NULL DEFAULT 'N') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;" 2>/dev/null || true
+    # Fallback: try with mysql_native_password authentication plugin
+    log_warn "Trying alternative method: mysql_native_password..."
+    mysql -u root << EOF
+ALTER USER '${DB_USER}'@'localhost' IDENTIFIED WITH mysql_native_password BY '${DB_PASSWORD}';
+FLUSH PRIVILEGES;
+EOF
+    if mysql -u "${DB_USER}" -p"${DB_PASSWORD}" -e "SELECT 1;" "${DB_NAME}" 2>/dev/null; then
+        log_info "Database connection verified successfully"
+        DB_CONNECTION_OK=true
+    fi
 fi
 
+# Abort installation if database connection cannot be established
+if [ "$DB_CONNECTION_OK" = false ]; then
+    log_error "DATABASE CONNECTION FAILED!"
+    log_error "Please check: systemctl status mariadb"
+    exit 1
+fi
+
+# Import timezone data for accurate time-based operations
+if command -v mysql_tzinfo_to_sql > /dev/null 2>&1 && [ -d /usr/share/zoneinfo ]; then
+    log_info "Importing timezone data to MySQL..."
+    
+    # Try multiple authentication methods for timezone import
+    if mysql_tzinfo_to_sql /usr/share/zoneinfo 2>/dev/null | mysql -u root mysql 2>/dev/null; then
+        log_info "Timezone data imported successfully (root)"
+        TZ_OK=true
+    elif sudo mysql_tzinfo_to_sql /usr/share/zoneinfo 2>/dev/null | sudo mysql -u root mysql 2>/dev/null; then
+        log_info "Timezone data imported successfully (sudo root)"
+        TZ_OK=true
+    elif mysql_tzinfo_to_sql /usr/share/zoneinfo 2>/dev/null | mysql -u "${DB_USER}" -p"${DB_PASSWORD}" mysql 2>/dev/null; then
+        log_info "Timezone data imported successfully (${DB_USER})"
+        TZ_OK=true
+    elif sudo mysql_tzinfo_to_sql /usr/share/zoneinfo 2>/dev/null | sudo mysql -u "${DB_USER}" -p"${DB_PASSWORD}" mysql 2>/dev/null; then
+        log_info "Timezone data imported successfully (sudo ${DB_USER})"
+        TZ_OK=true
+    else
+        log_warn "All timezone import attempts failed - timezone features may be limited"
+        TZ_OK=false
+    fi
+else
+    log_warn "mysql_tzinfo_to_sql or zoneinfo not found - timezone support not configured"
+    TZ_OK=false
+fi
+
+# Reload privilege tables to ensure all changes take effect
 mysql -u root -e "FLUSH TABLES;" mysql 2>/dev/null || true
 
 log_info "Database configured successfully"
@@ -304,9 +487,12 @@ log_info "Database configured successfully"
 # ============================================
 # Step 6: Setup Redis and Memcached
 # ============================================
+# Configures Redis as the message broker for Celery task queue
+# and Memcached for Django caching backend.
+
 log_info "Configuring Redis and Memcached..."
 
-# Configure Redis
+# Start and enable both caching services
 systemctl restart redis-server
 systemctl enable redis-server
 systemctl restart memcached
@@ -315,32 +501,33 @@ systemctl enable memcached
 log_info "Redis and Memcached configured"
 
 # ============================================
-# Step 7: Generate Django Configuration
+# Step 7: Generate Django and Service Configuration
 # ============================================
+# Creates the Django local_settings.py with all database connections,
+# caching backends, and service endpoints. Also generates uWSGI and
+# WebSocket server configuration files.
+
 log_info "Generating Django local_settings.py..."
 
-# Create local_settings.py with all required settings using generated values
+# Django configuration with all required settings for production
 cat > "${APP_DIR}/dmoj/local_settings.py" << EOF
 import os
 
-# ============================================
-# Basic Settings
-# ============================================
+# SECURITY WARNING: keep the secret key used in production secret!
 DEBUG = ${DEBUG}
 SECRET_KEY = r'''${SECRET_KEY}'''
 ALLOWED_HOSTS = ['*']
 
-# Site settings
+# Site identity configuration
 SITE_NAME = '${SITE_NAME}'
 SITE_LONG_NAME = '${SITE_LONG_NAME}'
 SITE_ADMIN_EMAIL = '${SITE_ADMIN_EMAIL}'
 SITE_DOMAIN = '${SITE_DOMAIN}'
 
+# CSRF protection configuration for the configured domain
 CSRF_TRUSTED_ORIGINS = [f'http://{SITE_DOMAIN}', f'http://{SITE_DOMAIN}:${WEB_PORT}']
 
-# ============================================
-# Database
-# ============================================
+# Database connection configuration
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
@@ -356,9 +543,7 @@ DATABASES = {
     }
 }
 
-# ============================================
-# Cache
-# ============================================
+# Cache configuration using Memcached
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.memcached.PyMemcacheCache',
@@ -366,106 +551,88 @@ CACHES = {
     }
 }
 
-# ============================================
-# Paths
-# ============================================
+# File storage paths for problem data and user uploads
 DMOJ_PROBLEM_DATA_ROOT = '${DATA_DIR}/problems'
 STATIC_ROOT = '${DATA_DIR}/static'
 MEDIA_ROOT = '${DATA_DIR}/media'
 
-# ============================================
-# Bridge Configuration
-# ============================================
+# Bridge daemon configuration for judge communication
 BRIDGED_JUDGE_ADDRESS = [('0.0.0.0', ${BRIDGE_PORT})]
 BRIDGED_DJANGO_ADDRESS = [('localhost', 9998)]
 
-# ============================================
-# Event Daemon (WebSocket)
-# ============================================
+# WebSocket event daemon configuration
 EVENT_DAEMON_USE = True
 EVENT_DAEMON_KEY = '${EVENT_DAEMON_KEY}'
 EVENT_DAEMON_URL = 'http://localhost:${WEBSOCKET_PORT}'
 EVENT_DAEMON_PUBLIC_URL = 'http://localhost:${WEBSOCKET_PORT}'
 
-# ============================================
-# Celery (Background Tasks)
-# ============================================
+# Celery task queue configuration using Redis
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
-# ============================================
-# Chat System
-# ============================================
+# Chat encryption key
 CHAT_SECRET_KEY = '${CHAT_SECRET_KEY}'
 
-# ============================================
-# Static Files
-# ============================================
+# Static file finders with django-compressor support
 STATICFILES_FINDERS = [
     'django.contrib.staticfiles.finders.FileSystemFinder',
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
     'compressor.finders.CompressorFinder',
 ]
 
-# ============================================
-# Logging
-# ============================================
+# Logging configuration with file output
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-        },
+        'console': {'class': 'logging.StreamHandler'},
         'file': {
             'class': 'logging.FileHandler',
             'filename': '${LOG_DIR}/django/django.log',
             'level': 'INFO',
         },
     },
-    'root': {
-        'handlers': ['console', 'file'],
-        'level': 'INFO',
-    },
+    'root': {'handlers': ['console', 'file'], 'level': 'INFO'},
 }
 
-# ============================================
-# Security (Development)
-# ============================================
+# Security settings (adjust for production with SSL)
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
 SECURE_PROXY_SSL_HEADER = None
 
-# ============================================
-# S3 Storage (Optional - uncomment to enable)
-# ============================================
-# DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-# AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
-# AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
-# AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', '')
-# AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME', 'ap-southeast-1')
+# Compressor settings (disable during initial setup for performance)
+COMPRESS_ENABLED = False
+COMPRESS_OFFLINE = False
 EOF
 
-# Generate uWSGI configuration
+chown "${APP_USER}:${APP_GROUP}" "${APP_DIR}/dmoj/local_settings.py"
+chmod 640 "${APP_DIR}/dmoj/local_settings.py"
+
+# Generate uWSGI configuration for serving Django application
 cat > "${APP_DIR}/uwsgi.ini" << EOF
 [uwsgi]
+# Socket configuration for Nginx communication
 uwsgi-socket = /tmp/dmoj-site.sock
 pidfile = /tmp/dmoj-site.pid
 chmod-socket = 666
 
+# Process ownership
 uid = ${APP_USER}
 gid = ${APP_GROUP}
 
+# Application paths
 chdir = ${APP_DIR}
 pythonpath = ${APP_DIR}
 home = ${APP_HOME}/venv
 
+# uWSGI protocol and application settings
 protocol = uwsgi
 master = true
 env = DJANGO_SETTINGS_MODULE=dmoj.settings
 module = dmoj.wsgi:application
 optimize = 2
 
+# Worker process management
 memory-report = true
 cheaper-algo = backlog
 cheaper = 3
@@ -476,7 +643,7 @@ cheaper-rss-limit-hard = 234881024
 workers = 7
 EOF
 
-# Generate websocket configuration
+# Generate WebSocket server configuration
 cat > "${APP_DIR}/websocket/config.js" << EOF
 module.exports = {
     get_host: '0.0.0.0',
@@ -493,8 +660,12 @@ EOF
 log_info "Configuration files generated"
 
 # ============================================
-# Step 8: Setup Nginx with Profile Images Support
+# Step 8: Setup Nginx Web Server
 # ============================================
+# Configures Nginx as the frontend reverse proxy, serving static files
+# directly and proxying dynamic requests to uWSGI and WebSocket connections
+# to the Node.js event daemon.
+
 log_info "Configuring Nginx..."
 
 cat > /etc/nginx/sites-available/capyjudge << EOF
@@ -502,38 +673,39 @@ server {
     listen ${WEB_PORT};
     server_name ${SITE_DOMAIN};
     
+    # Access and error logging
     access_log ${LOG_DIR}/nginx/access.log;
     error_log ${LOG_DIR}/nginx/error.log;
     
-    # Static files
+    # Serve static files directly with long cache expiry
     location /static {
         alias ${DATA_DIR}/static;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
     
-    # Media files
+    # Serve user-uploaded media files
     location /media {
         alias ${DATA_DIR}/media;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
     
-    # Profile images
+    # Serve profile images
     location /profile_images/ {
         alias ${APP_DIR}/profile_images/;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
     
-    # Organization images
+    # Serve organization logo images
     location /organization_images/ {
         alias ${APP_DIR}/organization_images/;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
     
-    # WebSocket
+    # WebSocket proxy for real-time features (chat, notifications, submissions)
     location /socket.io/ {
         proxy_pass http://127.0.0.1:${WEBSOCKET_PORT}/socket.io/;
         proxy_http_version 1.1;
@@ -546,7 +718,7 @@ server {
         proxy_read_timeout 86400;
     }
     
-    # Django application
+    # Main application proxy to uWSGI
     location / {
         include uwsgi_params;
         uwsgi_pass unix:///tmp/dmoj-site.sock;
@@ -557,10 +729,10 @@ server {
         uwsgi_param HTTP_X_FORWARDED_SERVER \$host;
     }
     
-    # Large file uploads for problems
+    # Maximum upload size for problem files
     client_max_body_size 100M;
     
-    # Gzip compression
+    # Enable gzip compression for text-based content
     gzip on;
     gzip_vary on;
     gzip_min_length 1024;
@@ -568,27 +740,30 @@ server {
 }
 EOF
 
-# Enable site
+# Enable the site and disable the default Nginx welcome page
 ln -sf /etc/nginx/sites-available/capyjudge /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 
-# Create necessary directories for nginx
+# Create directories for profile and organization images
 mkdir -p ${APP_DIR}/profile_images ${APP_DIR}/organization_images
-sudo chown -R ${APP_USER}:${APP_GROUP} ${APP_DIR}/profile_images ${APP_DIR}/organization_images
+chown -R ${APP_USER}:${APP_GROUP} ${APP_DIR}/profile_images ${APP_DIR}/organization_images
 
-# Test nginx configuration
-sudo nginx -t
-sudo systemctl restart nginx
+# Test Nginx configuration and apply
+nginx -t
+systemctl restart nginx
 
 log_info "Nginx configured successfully"
 
 # ============================================
-# Step 9: Setup Supervisor for All Services
+# Step 9: Setup Supervisor Process Manager
 # ============================================
+# Configures Supervisor to manage and monitor all application processes:
+# uWSGI web server, bridged judge daemon, Celery worker, and WebSocket server.
+
 log_info "Configuring Supervisor..."
 
-# Site (uWSGI)
-sudo cat > /etc/supervisor/conf.d/capyjudge-site.conf << EOF
+# uWSGI application server configuration
+cat > /etc/supervisor/conf.d/capyjudge-site.conf << EOF
 [program:capyjudge-site]
 command=${APP_HOME}/venv/bin/uwsgi --ini ${APP_DIR}/uwsgi.ini
 directory=${APP_DIR}
@@ -599,7 +774,7 @@ stdout_logfile=${LOG_DIR}/supervisor/site.log
 stderr_logfile=${LOG_DIR}/supervisor/site_error.log
 EOF
 
-# Bridge
+# Bridged daemon for judge communication
 cat > /etc/supervisor/conf.d/capyjudge-bridged.conf << EOF
 [program:capyjudge-bridged]
 command=${APP_HOME}/venv/bin/python manage.py runbridged
@@ -611,7 +786,7 @@ stdout_logfile=${LOG_DIR}/supervisor/bridged.log
 stderr_logfile=${LOG_DIR}/supervisor/bridged_error.log
 EOF
 
-# Celery
+# Celery worker for asynchronous task processing
 cat > /etc/supervisor/conf.d/capyjudge-celery.conf << EOF
 [program:capyjudge-celery]
 command=${APP_HOME}/venv/bin/celery -A dmoj_celery worker
@@ -622,7 +797,7 @@ stdout_logfile=${LOG_DIR}/celery/celery.log
 stderr_logfile=${LOG_DIR}/celery/celery_error.log
 EOF
 
-# WebSocket Event Daemon
+# WebSocket event daemon for real-time features
 cat > /etc/supervisor/conf.d/capyjudge-wsevent.conf << EOF
 [program:capyjudge-wsevent]
 command=node ${APP_DIR}/websocket/daemon.js
@@ -636,59 +811,59 @@ EOF
 log_info "Supervisor configurations created"
 
 # ============================================
-# Step 10: Django Initialization
+# Step 10: Django Application Initialization
 # ============================================
+# Performs all necessary Django setup tasks: compiles static assets,
+# runs database migrations, and loads initial data fixtures.
+# Note: Superuser creation is intentionally left as a manual step
+# for security reasons.
+
 log_info "Running Django setup..."
 
-cd "${APP_DIR}"
+export DJANGO_SETTINGS_MODULE=dmoj.settings
 
-# Run Django commands as capyjudge user
 sudo -u "${APP_USER}" bash << EOF
 source ${APP_HOME}/venv/bin/activate
 cd ${APP_DIR}
+
 export DJANGO_SETTINGS_MODULE=dmoj.settings
 
-# Compile CSS/SCSS
+# Compile SCSS to CSS if build script is available
 if [ -f "./make_style.sh" ]; then
     ./make_style.sh 2>/dev/null || true
 fi
 
-# Collect static files
-python manage.py collectstatic --noinput 2>/dev/null || true
+# Collect all static files to the STATIC_ROOT directory
+python3 manage.py collectstatic --noinput 2>/dev/null || true
 
-# Compile translations
-python manage.py compilemessages 2>/dev/null || true
-python manage.py compilejsi18n 2>/dev/null || true
+# Compile translation message catalogs
+python3 manage.py compilemessages 2>/dev/null || true
+python3 manage.py compilejsi18n 2>/dev/null || true
 
-# Run migrations
-python manage.py migrate --noinput
+# Apply all pending database migrations
+python3 manage.py migrate --noinput
 
-# Load initial data (using correct fixture names from LQDOJ)
-python manage.py loaddata navbar 2>/dev/null || true
-python manage.py loaddata language_small 2>/dev/null || python manage.py loaddata language 2>/dev/null || true
-python manage.py loaddata demo 2>/dev/null || true
-
-# Create superuser if credentials provided
-if [ ! -z "${DJANGO_SUPERUSER_USERNAME}" ] && [ ! -z "${DJANGO_SUPERUSER_PASSWORD}" ]; then
-    echo "Creating superuser from environment..."
-    python manage.py createsuperuser --noinput \
-        --username "${DJANGO_SUPERUSER_USERNAME}" \
-        --email "${DJANGO_SUPERUSER_EMAIL}" 2>/dev/null || true
-fi
+# Load initial data fixtures for site functionality
+python3 manage.py loaddata navbar 2>/dev/null || true
+python3 manage.py loaddata language_small 2>/dev/null || python3 manage.py loaddata language 2>/dev/null || true
+python3 manage.py loaddata demo 2>/dev/null || true
 
 EOF
 
 log_info "Django initialization complete"
 
 # ============================================
-# Step 11: Start Services
+# Step 11: Start All Services
 # ============================================
+# Starts and enables all system services to ensure they automatically
+# start on system boot. Reloads Supervisor to pick up new configurations.
+
 log_info "Starting all services..."
 
-# Reload systemd
+# Reload systemd to recognize any new service files
 systemctl daemon-reload
 
-# Start and enable all services
+# Start and enable database and caching services
 systemctl restart mariadb
 systemctl enable mariadb
 
@@ -698,13 +873,15 @@ systemctl enable redis-server
 systemctl restart memcached
 systemctl enable memcached
 
+# Start and enable web server
 systemctl restart nginx
 systemctl enable nginx
 
+# Start and enable process manager
 systemctl restart supervisor
 systemctl enable supervisor
 
-# Reload supervisor to pick up new configs
+# Reload Supervisor configurations and start all managed processes
 supervisorctl reread
 supervisorctl update
 supervisorctl start all
@@ -712,56 +889,70 @@ supervisorctl start all
 log_info "All services started"
 
 # ============================================
-# Step 12: Final Permissions and Cleanup
+# Step 12: Final Permission Hardening
 # ============================================
+# Performs a final permissions audit to ensure all files and directories
+# have the correct ownership and access rights for security.
+
 log_info "Final permissions check..."
 
-# Ensure all directories have correct permissions
+# Ensure base directories are accessible
+chmod 755 /home/capyjudge
+chmod 755 ${APP_HOME}
+chmod 755 ${DATA_DIR}
+
+# Recursively set correct ownership for all application files
 chown -R "${APP_USER}:${APP_GROUP}" "${DATA_DIR}" "${LOG_DIR}" "${APP_DIR}"
-chmod -R 755 "${DATA_DIR}" "${LOG_DIR}"
 
-# Ensure log files are writable
-touch "${LOG_DIR}/django/django.log" 2>/dev/null || true
-chown -R "${APP_USER}:${APP_GROUP}" "${LOG_DIR}"
-find "${LOG_DIR}" -type f -exec chmod 644 {} \; 2>/dev/null || true
+# Set directory permissions to allow traversal
+find "${DATA_DIR}" -type d -exec chmod 755 {} \;
+find "${LOG_DIR}" -type d -exec chmod 755 {} \;
+# Set file permissions to be readable but not writable by others
+find "${DATA_DIR}/static" -type f -exec chmod 644 {} \;
+find "${DATA_DIR}/media" -type f -exec chmod 644 {} \;
+find "${LOG_DIR}" -type f -exec chmod 644 {} \;
 
-# Ensure nginx can read static files
-chmod +x "${DATA_DIR}" 2>/dev/null || true
-chmod +x "${DATA_DIR}/static" 2>/dev/null || true
+# Ensure Nginx user has group access to application files
+usermod -a -G "${APP_GROUP}" www-data 2>/dev/null || true
+
+# Restart Nginx to apply any permission changes
+systemctl restart nginx
+
+log_info "Permissions fixed"
 
 # ============================================
-# Installation Complete
+# Installation Complete - Summary and Next Steps
 # ============================================
 log_info "========================================="
-log_info "CapyJudge Installation Complete!"
+log_info "  CapyJudge Installation Complete!"
 log_info "========================================="
-log_info "Installation Directory: ${APP_DIR}"
-log_info "Data Directory: ${DATA_DIR}"
-log_info "Logs Directory: ${LOG_DIR}"
+log_info "Web Interface: http://${SITE_DOMAIN}:${WEB_PORT}"
 log_info ""
-log_info "Database: ${DB_NAME}"
-log_info "Database User: ${DB_USER}"
+log_info "Database Name:     ${DB_NAME}"
+log_info "Database User:     ${DB_USER}"
+log_info "Database Password: ${DB_PASSWORD}"
 log_info ""
-log_info "Web Port: ${WEB_PORT}"
-log_info "Bridge Port: ${BRIDGE_PORT}"
-log_info "WebSocket Port: ${WEBSOCKET_PORT}"
+log_info "Credentials file: ${DATA_DIR}/secrets/credentials.txt"
 log_info ""
-log_info "Credentials saved in: ${DATA_DIR}/secrets/credentials.txt"
-log_info "Secret keys saved in: ${DATA_DIR}/secrets/"
+log_info "========================================="
+log_info "IMPORTANT: Create Superuser Account"
+log_info "========================================="
+log_info "Run the following commands to create an admin user:"
 log_info ""
-log_info "Access CapyJudge at: http://${SITE_DOMAIN}:${WEB_PORT}"
+log_info "  sudo -u ${APP_USER} bash"
+log_info "  source ${APP_HOME}/venv/bin/activate"
+log_info "  cd ${APP_DIR}"
+log_info "  python3 manage.py createsuperuser"
 log_info ""
-log_info "Superuser Account:"
-log_info "  Username: ${DJANGO_SUPERUSER_USERNAME}"
-log_info "  Password: ${DJANGO_SUPERUSER_PASSWORD}"
+log_info "Then enter your desired username, email, and password."
 log_info "========================================="
 
-# Test if services are running
+# Brief verification that services are running
 sleep 3
 if supervisorctl status | grep -q "RUNNING"; then
     log_info "Services are running successfully!"
 else
-    log_warn "Some services may not be running. Check with: capyjudge-status"
+    log_warn "Some services may not be running. Check with: supervisorctl status"
 fi
 
 exit 0
