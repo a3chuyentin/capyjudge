@@ -94,12 +94,15 @@ sudo apt-get install -y \
     libseccomp-dev \
     automake \
     cmake \
-    libpq-dev
+    libpq-dev \
+	unzip 
 
-# Download and install fnm:
-curl -o- https://fnm.vercel.app/install | bash
+# Download and install nvm:
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
+# in lieu of restarting the shell
+\. "$HOME/.nvm/nvm.sh"
 # Download and install Node.js:
-fnm install 24
+nvm install 24
 
 # Install Node.js global tools
 npm install -g sass postcss-cli postcss autoprefixer
