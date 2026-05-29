@@ -47,7 +47,7 @@ APP_USER="capyjudge"
 APP_GROUP="capyjudge"
 
 # Base directories for application, data, and logs
-APP_HOME="/home/capyjudge"
+APP_HOME="/home/${APP_USER}"
 APP_DIR="${APP_HOME}/capyjudge"
 DATA_DIR="${APP_HOME}/capyjudge-data"
 LOG_DIR="${APP_HOME}/logs"
@@ -82,7 +82,7 @@ log_error() {
 
 # Generates a 50-character random secret key for Django SECRET_KEY
 generate_secret_key() {
-    sudo -u "${APP_USER}" "${PYTHON_BIN}" -c "
+    sudo -u "${APP_USER}" "${APP_HOME}/venv/bin/python3" -c "
 import secrets
 import string
 chars = string.ascii_letters + string.digits + '!@#\$%^&*()-_=+[]{}|;:,.<>?'
@@ -92,12 +92,12 @@ print(''.join(secrets.choice(chars) for _ in range(50)))
 
 # Generates a Fernet encryption key for chat message encryption
 generate_fernet_key() {
-    sudo -u "${APP_USER}" "${PYTHON_BIN}" -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
+    sudo -u "${APP_USER}" "${APP_HOME}/venv/bin/python3" -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
 }
 
 # Generates a 32-character random password for database and service credentials
 generate_random_password() {
-    sudo -u "${APP_USER}" "${PYTHON_BIN}" -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
+    sudo -u "${APP_USER}" "${APP_HOME}/venv/bin/python3" -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
 }
 
 # ============================================
@@ -135,48 +135,6 @@ sudo apt-get install -y \
     unzip \
     mariadb-client-compat
 
-# Install Node.js and npm via nvm for frontend asset compilation
-# Check if npm is already installed to avoid redundant installation
-if command -v npm &> /dev/null; then
-    NPM_VERSION=$(npm --version)
-    NODE_VERSION=$(node --version)
-    log_info "npm ${NPM_VERSION} (Node.js ${NODE_VERSION}) already installed, skipping installation"
-else
-    log_info "Installing Node.js and npm..."
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
-    
-    # Load nvm immediately
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-    
-    nvm install 24
-    log_info "Node.js and npm installed successfully"
-fi
-
-# Ensure nvm is loaded
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-
-# Resolve absolute paths for npm and node
-NPM_BIN=$(which npm)
-NODE_BIN=$(which node)
-
-log_info "Using npm: ${NPM_BIN}"
-log_info "Using node: ${NODE_BIN}"
-
-# Global npm packages for SCSS and PostCSS processing
-# Set npm prefix to user directory to avoid permission issues
-mkdir -p "$HOME/.npm-global"
-"${NPM_BIN}" config set prefix "$HOME/.npm-global"
-export PATH="$HOME/.npm-global/bin:$PATH"
-
-"${NPM_BIN}" install -g sass postcss-cli postcss autoprefixer
-
-# Create symlinks so these tools are available system-wide
-sudo ln -sf "$HOME/.npm-global/bin/sass" /usr/local/bin/sass
-sudo ln -sf "$HOME/.npm-global/bin/postcss" /usr/local/bin/postcss
-sudo ln -sf "$HOME/.npm-global/bin/autoprefixer" /usr/local/bin/autoprefixer
-
 log_info "System dependencies installed"
 
 # ============================================
@@ -185,7 +143,7 @@ log_info "System dependencies installed"
 # Creates a dedicated unprivileged user account for running the application,
 # enhancing security by isolating the judge processes from the system.
 
-log_info "Creating capyjudge user and group..."
+log_info "Creating ${APP_USER} user and group..."
 
 # Create group if it doesn't already exist
 if ! getent group "${APP_GROUP}" > /dev/null 2>&1; then
@@ -205,7 +163,43 @@ sudo usermod -a -G "${APP_GROUP}" www-data
 log_info "User and group setup complete"
 
 # ============================================
-# Step 0b: Create Directory Structure
+# Step 0b: Install Node.js and npm for APP_USER
+# ============================================
+# Installs Node.js and npm via nvm under the APP_USER account.
+# This ensures all npm/node paths are owned by and accessible to APP_USER.
+
+log_info "Installing Node.js and npm for user ${APP_USER}..."
+
+sudo -u "${APP_USER}" bash << 'NVMEOF'
+# Clean up any previous incompatible .npmrc
+rm -f ~/.npmrc
+
+# Install nvm if not already present
+if [ ! -d "$HOME/.nvm" ]; then
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
+fi
+
+# Load nvm
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+# Install Node.js 24 if not already installed
+if ! nvm ls 24 > /dev/null 2>&1; then
+    nvm install 24
+fi
+
+nvm use 24
+nvm alias default 24
+
+# Verify installation
+echo "Node.js: $(node --version)"
+echo "npm: $(npm --version)"
+NVMEOF
+
+log_info "Node.js and npm installed successfully for user ${APP_USER}"
+
+# ============================================
+# Step 0c: Create Directory Structure
 # ============================================
 # Establishes the complete directory hierarchy for application data,
 # problem files, static assets, and log storage with proper permissions.
@@ -232,7 +226,7 @@ sudo chmod 755 "${DATA_DIR}" "${LOG_DIR}" /run/nginx
 log_info "Directory structure created"
 
 # ============================================
-# Step 0c: Clone Application Repository
+# Step 0d: Clone Application Repository
 # ============================================
 # Retrieves the CapyJudge source code from GitHub. If the repository
 # already exists, it pulls the latest changes and updates submodules
@@ -258,7 +252,7 @@ fi
 cd "${APP_DIR}"
 
 # ============================================
-# Step 0d: Setup Virtual Environment & Install Dependencies
+# Step 0e: Setup Virtual Environment & Install Python Dependencies
 # ============================================
 # Creates an isolated Python environment to avoid conflicts with system
 # packages. Installs all required Python packages from requirements.txt
@@ -277,31 +271,49 @@ if [ ! -d "${APP_HOME}/venv" ]; then
     log_info "Virtual environment created"
 fi
 
-# Resolve Python binary path in venv
-PYTHON_BIN="${APP_HOME}/venv/bin/python3"
-PIP_BIN="${APP_HOME}/venv/bin/pip"
-UWSGI_BIN="${APP_HOME}/venv/bin/uwsgi"
-CELERY_BIN="${APP_HOME}/venv/bin/celery"
-
 # Install Python dependencies as the application user
 sudo -u "${APP_USER}" bash << EOF
 source ${APP_HOME}/venv/bin/activate
+
 # Upgrade core packaging tools
-${PIP_BIN} install --upgrade pip setuptools wheel
+pip install --upgrade pip setuptools wheel
+
 # Install project requirements
 if [ -f "${APP_DIR}/requirements.txt" ]; then
-    ${PIP_BIN} install -r "${APP_DIR}/requirements.txt"
+    pip install -r "${APP_DIR}/requirements.txt"
 fi
+
 # Install additional production deployment packages
-${PIP_BIN} install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages
+pip install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages
+
 # Set up pre-commit hooks for code quality (optional, for development)
+cd "${APP_DIR}"
 pre-commit install
 EOF
 
-# Install Node.js dependencies for the WebSocket server
+log_info "Python dependencies installed"
+
+# ============================================
+# Step 0f: Install Node.js Dependencies
+# ============================================
+# Installs npm packages for the WebSocket server and global SCSS/PostCSS tools.
+
+log_info "Installing Node.js dependencies..."
+
+# Install global npm packages and websocket dependencies as APP_USER
+sudo -u "${APP_USER}" bash << EOF
+# Load nvm
+export NVM_DIR="\$HOME/.nvm"
+[ -s "\$NVM_DIR/nvm.sh" ] && \. "\$NVM_DIR/nvm.sh"
+nvm use 24
+
+# Install global SCSS/PostCSS packages
+npm install -g sass postcss-cli postcss autoprefixer
+
+# Install websocket server dependencies
 cd "${APP_DIR}/websocket"
-sudo -u "${APP_USER}" "${NPM_BIN}" install express socket.io qu ws simplesets
-cd "${APP_DIR}"
+npm install express socket.io qu ws simplesets
+EOF
 
 log_info "All dependencies installed"
 
@@ -791,14 +803,21 @@ log_info "Nginx configured successfully"
 # ============================================
 # Configures Supervisor to manage and monitor all application processes:
 # uWSGI web server, bridged judge daemon, Celery worker, and WebSocket server.
+# All paths use absolute references from APP_USER's environment.
 
 log_info "Configuring Supervisor..."
 
-# Resolve absolute paths for binaries used in supervisor configs
+# Resolve absolute paths for binaries (from APP_USER's nvm)
+NODE_BIN=$(sudo -u "${APP_USER}" bash -c 'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; which node')
+PYTHON_BIN="${APP_HOME}/venv/bin/python3"
 UWSGI_BIN="${APP_HOME}/venv/bin/uwsgi"
 CELERY_BIN="${APP_HOME}/venv/bin/celery"
-MANAGE_PY="${APP_DIR}/manage.py"
-DAEMON_JS="${APP_DIR}/websocket/daemon.js"
+
+log_info "Resolved paths:"
+log_info "  Node.js: ${NODE_BIN}"
+log_info "  Python:  ${PYTHON_BIN}"
+log_info "  uWSGI:   ${UWSGI_BIN}"
+log_info "  Celery:  ${CELERY_BIN}"
 
 # uWSGI application server configuration
 sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-site.conf" << EOF
@@ -815,7 +834,7 @@ EOF
 # Bridged daemon for judge communication
 sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-bridged.conf" << EOF
 [program:capyjudge-bridged]
-command=${PYTHON_BIN} ${MANAGE_PY} runbridged
+command=${PYTHON_BIN} ${APP_DIR}/manage.py runbridged
 directory=${APP_DIR}
 stopsignal=INT
 user=${APP_USER}
@@ -838,7 +857,7 @@ EOF
 # WebSocket event daemon for real-time features
 sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-wsevent.conf" << EOF
 [program:capyjudge-wsevent]
-command=${NODE_BIN} ${DAEMON_JS}
+command=${NODE_BIN} ${APP_DIR}/websocket/daemon.js
 directory=${APP_DIR}
 user=${APP_USER}
 group=${APP_GROUP}
@@ -858,9 +877,12 @@ log_info "Supervisor configurations created"
 
 log_info "Running Django setup..."
 
-export DJANGO_SETTINGS_MODULE=dmoj.settings
-
 sudo -u "${APP_USER}" bash << EOF
+# Load nvm for this session
+export NVM_DIR="\$HOME/.nvm"
+[ -s "\$NVM_DIR/nvm.sh" ] && \. "\$NVM_DIR/nvm.sh"
+nvm use 24
+
 source ${APP_HOME}/venv/bin/activate
 cd ${APP_DIR}
 
@@ -872,19 +894,19 @@ if [ -f "./make_style.sh" ]; then
 fi
 
 # Collect all static files to the STATIC_ROOT directory
-${PYTHON_BIN} manage.py collectstatic --noinput 2>/dev/null || true
+python3 manage.py collectstatic --noinput 2>/dev/null || true
 
 # Compile translation message catalogs
-${PYTHON_BIN} manage.py compilemessages 2>/dev/null || true
-${PYTHON_BIN} manage.py compilejsi18n 2>/dev/null || true
+python3 manage.py compilemessages 2>/dev/null || true
+python3 manage.py compilejsi18n 2>/dev/null || true
 
-# Apply all pending database migrations${PYTHON_BIN} manage.py migrate --noinput
+# Apply all pending database migrations
+python3 manage.py migrate --noinput
 
 # Load initial data fixtures for site functionality
-${PYTHON_BIN} manage.py loaddata navbar 2>/dev/null || true
-${PYTHON_BIN} manage.py loaddata language_small 2>/dev/null || ${PYTHON_BIN} manage.py loaddata language 2>/dev/null || true
-${PYTHON_BIN} manage.py loaddata demo 2>/dev/null || true
-
+python3 manage.py loaddata navbar 2>/dev/null || true
+python3 manage.py loaddata language_small 2>/dev/null || python3 manage.py loaddata language 2>/dev/null || true
+python3 manage.py loaddata demo 2>/dev/null || true
 EOF
 
 log_info "Django initialization complete"
@@ -934,7 +956,7 @@ log_info "All services started"
 log_info "Final permissions check..."
 
 # Ensure base directories are accessible
-sudo chmod 755 /home/capyjudge
+sudo chmod 755 /home/${APP_USER}
 sudo chmod 755 ${APP_HOME}
 sudo chmod 755 ${DATA_DIR}
 
@@ -979,7 +1001,7 @@ log_info ""
 log_info "  sudo -u ${APP_USER} bash"
 log_info "  source ${APP_HOME}/venv/bin/activate"
 log_info "  cd ${APP_DIR}"
-log_info "  ${PYTHON_BIN} manage.py createsuperuser"
+log_info "  python3 manage.py createsuperuser"
 log_info ""
 log_info "Then enter your desired username, email, and password."
 log_info "========================================="
