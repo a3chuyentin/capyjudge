@@ -327,7 +327,7 @@ import os
 # Basic Settings
 # ============================================
 DEBUG = ${DEBUG}
-SECRET_KEY = '${SECRET_KEY}'
+SECRET_KEY = r'''${SECRET_KEY}'''
 ALLOWED_HOSTS = ['*']
 
 # Site settings
