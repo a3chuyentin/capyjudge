@@ -49,23 +49,6 @@ generate_random_password() {
     python3 -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
 }
 
-load_env_file() {
-    if [ -f "$ENV_FILE" ]; then
-        log_info "Loading existing .env file from $ENV_FILE"
-        set -a
-        source "$ENV_FILE"
-        set +a
-        return 0
-    else
-        return 1
-    fi
-}
-
-create_env_file() {
-    log_info "Creating new .env file from template"
-    cp "${ENV_EXAMPLE}" "${ENV_FILE}"
-}
-
 # ============================================
 # Step 0: System Prerequisites & Virtual Environment
 # ============================================
@@ -213,17 +196,66 @@ cd "${APP_DIR}"
 log_info "All dependencies installed"
 
 # ============================================
-# Step 4: Check or Create .env file (NOW Django is available)
+# Generate configuration values using helpers
 # ============================================
-log_info "Checking for .env file..."
+log_info "Generating configuration values..."
 
-if load_env_file; then
-    log_info "Using existing .env configuration"
-else
-    log_warn "No .env file found, creating from template"
-    create_env_file
-    load_env_file
-fi
+# Generate secret keys
+SECRET_KEY=$(generate_secret_key)
+EVENT_DAEMON_KEY=$(generate_random_password)
+CHAT_SECRET_KEY=$(generate_random_password)
+DB_PASSWORD=$(generate_random_password)
+FERNET_KEY=$(generate_fernet_key)
+
+# Set configuration values
+DB_NAME="${DB_NAME:-capyjudge}"
+DB_USER="${DB_USER:-capyjudge}"
+DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-3306}"
+WEB_PORT="${WEB_PORT:-80}"
+BRIDGE_PORT="${BRIDGE_PORT:-9999}"
+WEBSOCKET_PORT="${WEBSOCKET_PORT:-15100}"
+SITE_DOMAIN="${SITE_DOMAIN:-localhost}"
+SITE_NAME="${SITE_NAME:-CapyJudge}"
+SITE_LONG_NAME="${SITE_LONG_NAME:-CapyJudge Online Judge}"
+SITE_ADMIN_EMAIL="${SITE_ADMIN_EMAIL:-admin@localhost}"
+DJANGO_SUPERUSER_USERNAME="${DJANGO_SUPERUSER_USERNAME:-admin}"
+DJANGO_SUPERUSER_PASSWORD="${DJANGO_SUPERUSER_PASSWORD:-admin123}"
+DJANGO_SUPERUSER_EMAIL="${DJANGO_SUPERUSER_EMAIL:-admin@capyjudge.com}"
+DEBUG="${DEBUG:-False}"
+
+# Save secrets to file
+mkdir -p "${DATA_DIR}/secrets"
+cat > "${DATA_DIR}/secrets/credentials.txt" << EOF
+# CapyJudge Credentials
+# Generated on $(date)
+# Keep this file secure!
+
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
+DB_PASSWORD=${DB_PASSWORD}
+DB_HOST=${DB_HOST}
+DB_PORT=${DB_PORT}
+
+SECRET_KEY=${SECRET_KEY}
+EVENT_DAEMON_KEY=${EVENT_DAEMON_KEY}
+CHAT_SECRET_KEY=${CHAT_SECRET_KEY}
+FERNET_KEY=${FERNET_KEY}
+
+DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME}
+DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD}
+DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL}
+
+WEB_PORT=${WEB_PORT}
+BRIDGE_PORT=${BRIDGE_PORT}
+WEBSOCKET_PORT=${WEBSOCKET_PORT}
+SITE_DOMAIN=${SITE_DOMAIN}
+EOF
+
+chmod 600 "${DATA_DIR}/secrets/credentials.txt"
+chown "${APP_USER}:${APP_GROUP}" "${DATA_DIR}/secrets/credentials.txt"
+
+log_info "Configuration values generated and saved"
 
 # ============================================
 # Step 5: Setup MySQL Database with Timezone
@@ -236,10 +268,10 @@ systemctl enable mariadb
 
 # Create database, user, and setup timezone
 mysql << EOF
-CREATE DATABASE IF NOT EXISTS ${DB_NAME:-capyjudge} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '${DB_USER:-capyjudge}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
-GRANT ALL PRIVILEGES ON ${DB_NAME:-capyjudge}.* TO '${DB_USER:-capyjudge}'@'localhost';
-GRANT ALL PRIVILEGES ON test_${DB_NAME:-capyjudge}.* TO '${DB_USER:-capyjudge}'@'localhost';
+CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
+GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';
+GRANT ALL PRIVILEGES ON test_${DB_NAME}.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
@@ -274,24 +306,24 @@ log_info "Redis and Memcached configured"
 # ============================================
 log_info "Generating Django local_settings.py..."
 
-# Create local_settings.py with all required settings
+# Create local_settings.py with all required settings using generated values
 cat > "${APP_DIR}/dmoj/local_settings.py" << EOF
 import os
 
 # ============================================
 # Basic Settings
 # ============================================
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
-SECRET_KEY = os.environ.get('SECRET_KEY', '')
+DEBUG = ${DEBUG}
+SECRET_KEY = '${SECRET_KEY}'
 ALLOWED_HOSTS = ['*']
 
 # Site settings
-SITE_NAME = os.environ.get('SITE_NAME', 'CapyJudge')
-SITE_LONG_NAME = os.environ.get('SITE_LONG_NAME', 'CapyJudge Online Judge')
-SITE_ADMIN_EMAIL = os.environ.get('SITE_ADMIN_EMAIL', 'admin@localhost')
-SITE_DOMAIN = os.environ.get('SITE_DOMAIN', 'localhost')
+SITE_NAME = '${SITE_NAME}'
+SITE_LONG_NAME = '${SITE_LONG_NAME}'
+SITE_ADMIN_EMAIL = '${SITE_ADMIN_EMAIL}'
+SITE_DOMAIN = '${SITE_DOMAIN}'
 
-CSRF_TRUSTED_ORIGINS = [f'http://{SITE_DOMAIN}', f'http://{SITE_DOMAIN}:{os.environ.get("WEB_PORT", "80")}']
+CSRF_TRUSTED_ORIGINS = [f'http://{SITE_DOMAIN}', f'http://{SITE_DOMAIN}:${WEB_PORT}']
 
 # ============================================
 # Database
@@ -299,11 +331,11 @@ CSRF_TRUSTED_ORIGINS = [f'http://{SITE_DOMAIN}', f'http://{SITE_DOMAIN}:{os.envi
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.environ.get('DB_NAME', 'capyjudge'),
-        'USER': os.environ.get('DB_USER', 'capyjudge'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-        'PORT': os.environ.get('DB_PORT', '3306'),
+        'NAME': '${DB_NAME}',
+        'USER': '${DB_USER}',
+        'PASSWORD': '${DB_PASSWORD}',
+        'HOST': '${DB_HOST}',
+        'PORT': '${DB_PORT}',
         'OPTIONS': {
             'charset': 'utf8mb4',
             'sql_mode': 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION',
@@ -317,7 +349,7 @@ DATABASES = {
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.memcached.PyMemcacheCache',
-        'LOCATION': os.environ.get('MEMCACHED_URL', '127.0.0.1:11211'),
+        'LOCATION': '127.0.0.1:11211',
     }
 }
 
@@ -331,27 +363,27 @@ MEDIA_ROOT = '${DATA_DIR}/media'
 # ============================================
 # Bridge Configuration
 # ============================================
-BRIDGED_JUDGE_ADDRESS = [('0.0.0.0', int(os.environ.get('BRIDGE_PORT', '9999')))]
+BRIDGED_JUDGE_ADDRESS = [('0.0.0.0', ${BRIDGE_PORT})]
 BRIDGED_DJANGO_ADDRESS = [('localhost', 9998)]
 
 # ============================================
 # Event Daemon (WebSocket)
 # ============================================
 EVENT_DAEMON_USE = True
-EVENT_DAEMON_KEY = os.environ.get('EVENT_DAEMON_KEY', '')
-EVENT_DAEMON_URL = os.environ.get('EVENT_DAEMON_URL', 'http://localhost:15100')
-EVENT_DAEMON_PUBLIC_URL = os.environ.get('EVENT_DAEMON_PUBLIC_URL', 'http://localhost:15100')
+EVENT_DAEMON_KEY = '${EVENT_DAEMON_KEY}'
+EVENT_DAEMON_URL = 'http://localhost:${WEBSOCKET_PORT}'
+EVENT_DAEMON_PUBLIC_URL = 'http://localhost:${WEBSOCKET_PORT}'
 
 # ============================================
 # Celery (Background Tasks)
 # ============================================
-CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
 # ============================================
 # Chat System
 # ============================================
-CHAT_SECRET_KEY = os.environ.get('CHAT_SECRET_KEY', '')
+CHAT_SECRET_KEY = '${CHAT_SECRET_KEY}'
 
 # ============================================
 # Static Files
@@ -435,11 +467,11 @@ EOF
 cat > "${APP_DIR}/websocket/config.js" << EOF
 module.exports = {
     get_host: '0.0.0.0',
-    get_port: ${WEBSOCKET_PORT:-15100},
+    get_port: ${WEBSOCKET_PORT},
     post_host: '0.0.0.0',
-    post_port: ${WEBSOCKET_PORT:-15101},
+    post_port: $((WEBSOCKET_PORT + 1)),
     http_host: '0.0.0.0',
-    http_port: ${WEBSOCKET_PORT:-15102},
+    http_port: $((WEBSOCKET_PORT + 2)),
     long_poll_timeout: 29000,
     backend_auth_token: '${EVENT_DAEMON_KEY}',
 };
@@ -454,8 +486,8 @@ log_info "Configuring Nginx..."
 
 cat > /etc/nginx/sites-available/capyjudge << EOF
 server {
-    listen ${WEB_PORT:-80};
-    server_name ${SITE_DOMAIN:-localhost};
+    listen ${WEB_PORT};
+    server_name ${SITE_DOMAIN};
     
     access_log ${LOG_DIR}/nginx/access.log;
     error_log ${LOG_DIR}/nginx/error.log;
@@ -490,7 +522,7 @@ server {
     
     # WebSocket
     location /socket.io/ {
-        proxy_pass http://127.0.0.1:${WEBSOCKET_PORT:-15100}/socket.io/;
+        proxy_pass http://127.0.0.1:${WEBSOCKET_PORT}/socket.io/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -602,12 +634,6 @@ sudo -u "${APP_USER}" bash << EOF
 source ${APP_HOME}/venv/bin/activate
 cd ${APP_DIR}
 export DJANGO_SETTINGS_MODULE=dmoj.settings
-export SECRET_KEY="${SECRET_KEY}"
-export DB_PASSWORD="${DB_PASSWORD}"
-export CHAT_SECRET_KEY="${CHAT_SECRET_KEY}"
-export EVENT_DAEMON_KEY="${EVENT_DAEMON_KEY}"
-export DEBUG="${DEBUG}"
-export BRIDGE_PORT="${BRIDGE_PORT:-9999}"
 
 # Compile CSS/SCSS
 if [ -f "./make_style.sh" ]; then
@@ -634,7 +660,7 @@ if [ ! -z "${DJANGO_SUPERUSER_USERNAME}" ] && [ ! -z "${DJANGO_SUPERUSER_PASSWOR
     echo "Creating superuser from environment..."
     python3 manage.py createsuperuser --noinput \
         --username "${DJANGO_SUPERUSER_USERNAME}" \
-        --email "${DJANGO_SUPERUSER_EMAIL:-admin@capyjudge.com}" 2>/dev/null || true
+        --email "${DJANGO_SUPERUSER_EMAIL}" 2>/dev/null || true
 fi
 
 EOF
@@ -700,21 +726,21 @@ log_info "Installation Directory: ${APP_DIR}"
 log_info "Data Directory: ${DATA_DIR}"
 log_info "Logs Directory: ${LOG_DIR}"
 log_info ""
-log_info "Database: ${DB_NAME:-capyjudge}"
-log_info "Database User: ${DB_USER:-capyjudge}"
+log_info "Database: ${DB_NAME}"
+log_info "Database User: ${DB_USER}"
 log_info ""
-log_info "Web Port: ${WEB_PORT:-80}"
-log_info "Bridge Port: ${BRIDGE_PORT:-9999}"
-log_info "WebSocket Port: ${WEBSOCKET_PORT:-15100}"
+log_info "Web Port: ${WEB_PORT}"
+log_info "Bridge Port: ${BRIDGE_PORT}"
+log_info "WebSocket Port: ${WEBSOCKET_PORT}"
 log_info ""
-log_info "Environment file: ${ENV_FILE}"
+log_info "Credentials saved in: ${DATA_DIR}/secrets/credentials.txt"
 log_info "Secret keys saved in: ${DATA_DIR}/secrets/"
 log_info ""
-log_info "Access CapyJudge at: http://${SITE_DOMAIN:-localhost}:${WEB_PORT:-80}"
+log_info "Access CapyJudge at: http://${SITE_DOMAIN}:${WEB_PORT}"
 log_info ""
-log_info "Superuser Account (if created):"
-log_info "  Username: ${DJANGO_SUPERUSER_USERNAME:-admin}"
-log_info "  Password: ${DJANGO_SUPERUSER_PASSWORD:-admin123}"
+log_info "Superuser Account:"
+log_info "  Username: ${DJANGO_SUPERUSER_USERNAME}"
+log_info "  Password: ${DJANGO_SUPERUSER_PASSWORD}"
 log_info "========================================="
 
 # Test if services are running
