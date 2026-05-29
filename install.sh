@@ -690,13 +690,9 @@ EOF
 # Generate WebSocket server configuration
 sudo bash -c "cat > ${APP_DIR}/websocket/config.js" << EOF
 module.exports = {
-    get_host: '0.0.0.0',
-    get_port: ${WEBSOCKET_PORT},
-    post_host: '0.0.0.0',
-    post_port: $((WEBSOCKET_PORT + 1)),
-    http_host: '0.0.0.0',
-    http_port: $((WEBSOCKET_PORT + 2)),
-    long_poll_timeout: 29000,
+    http_host: '127.0.0.1',
+    http_port: 15100,
+    connection_timeout: 300000,
     backend_auth_token: '${EVENT_DAEMON_KEY}',
 };
 EOF
