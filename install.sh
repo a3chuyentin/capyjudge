@@ -42,7 +42,7 @@ generate_secret_key() {
 }
 
 generate_fernet_key() {
-    python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    python3 -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
 }
 
 generate_random_password() {
@@ -159,10 +159,10 @@ ENVEOF
 log_info "Step 0: Installing system dependencies and setting up virtual environment..."
 
 # Update package list
-apt-get update -y
+sudo apt-get update -y
 
 # Install essential packages
-apt-get install -y \
+sudo apt-get install -y \
     git curl wget gnupg lsb-release ca-certificates \
     python3 python3-pip python3-dev python3-venv python3-full \
     gcc g++ gcc-12 g++-12 make \
@@ -183,11 +183,10 @@ apt-get install -y \
     cmake \
     libpq-dev
 
-apt-get install -y mariadb-server
-
-# Install Node.js 18.x (required for websocket)
-curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-apt-get install -y nodejs
+# Download and install fnm:
+curl -o- https://fnm.vercel.app/install | bash
+# Download and install Node.js:
+fnm install 24
 
 # Install Node.js global tools
 npm install -g sass postcss-cli postcss autoprefixer
@@ -391,28 +390,6 @@ log_info "Database configured successfully"
 log_info "Configuring Redis and Memcached..."
 
 # Configure Redis
-mkdir -p /etc/redis/redis.conf.d/
-cat > /etc/redis/redis.conf.d/99-capyjudge.conf << EOF
-maxmemory 256mb
-maxmemory-policy allkeys-lru
-save 900 1
-save 300 10
-save 60 10000
-EOF
-
-# Or append directly to redis.conf if directory doesn't work
-if [ ! -d "/etc/redis/redis.conf.d" ]; then
-    echo "" >> /etc/redis/redis.conf
-    echo "# CapyJudge Settings" >> /etc/redis/redis.conf
-    echo "maxmemory 256mb" >> /etc/redis/redis.conf
-    echo "maxmemory-policy allkeys-lru" >> /etc/redis/redis.conf
-fi
-
-# Configure Memcached
-sed -i 's/-m 64/-m 256/' /etc/memcached.conf
-sed -i 's/-l 127.0.0.1/-l 0.0.0.0/' /etc/memcached.conf
-
-# Restart services
 systemctl restart redis-server
 systemctl enable redis-server
 systemctl restart memcached
@@ -556,29 +533,30 @@ EOF
 cat > "${APP_DIR}/uwsgi.ini" << EOF
 [uwsgi]
 uwsgi-socket = /tmp/dmoj-site.sock
+pidfile = /tmp/dmoj-site.pid
 chmod-socket = 666
+
+uid = ${APP_USER}
+gid = ${APP_GROUP}
+
 chdir = ${APP_DIR}
 pythonpath = ${APP_DIR}
 home = ${APP_HOME}/venv
+
 protocol = uwsgi
 master = true
 env = DJANGO_SETTINGS_MODULE=dmoj.settings
 module = dmoj.wsgi:application
 optimize = 2
+
 memory-report = true
-workers = 4
-threads = 2
-harakiri = 15
-max-requests = 5000
-vacuum = true
-die-on-term = true
-logto = ${LOG_DIR}/uwsgi/uwsgi.log
-log-reopen = true
-uid = ${APP_USER}
-gid = ${APP_GROUP}
-buffer-size = 32768
-post-buffering = 8192
-socket-timeout = 30
+cheaper-algo = backlog
+cheaper = 3
+cheaper-initial = 5
+cheaper-step = 1
+cheaper-rss-limit-soft = 201326592
+cheaper-rss-limit-hard = 234881024
+workers = 7
 EOF
 
 # Generate websocket configuration
@@ -624,7 +602,7 @@ server {
         add_header Cache-Control "public, immutable";
     }
     
-    # Profile images (LQDOJ feature)
+    # Profile images
     location /profile_images/ {
         alias ${APP_DIR}/profile_images/;
         expires 30d;
@@ -679,10 +657,11 @@ rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 
 # Create necessary directories for nginx
 mkdir -p ${APP_DIR}/profile_images ${APP_DIR}/organization_images
-chown -R ${APP_USER}:${APP_GROUP} ${APP_DIR}/profile_images ${APP_DIR}/organization_images
+sudo chown -R ${APP_USER}:${APP_GROUP} ${APP_DIR}/profile_images ${APP_DIR}/organization_images
 
 # Test nginx configuration
-nginx -t
+sudo nginx -t
+sudo systemctl restart nginx
 
 log_info "Nginx configured successfully"
 
@@ -692,48 +671,38 @@ log_info "Nginx configured successfully"
 log_info "Configuring Supervisor..."
 
 # Site (uWSGI)
-cat > /etc/supervisor/conf.d/capyjudge-site.conf << EOF
+sudo cat > /etc/supervisor/conf.d/capyjudge-site.conf << EOF
 [program:capyjudge-site]
 command=${APP_HOME}/venv/bin/uwsgi --ini ${APP_DIR}/uwsgi.ini
 directory=${APP_DIR}
 user=${APP_USER}
-autostart=true
-autorestart=true
+group=${APP_GROUP}
+stopsignal=QUIT
 stdout_logfile=${LOG_DIR}/supervisor/site.log
-stdout_logfile_maxbytes=10MB
 stderr_logfile=${LOG_DIR}/supervisor/site_error.log
-stderr_logfile_maxbytes=10MB
-environment=DJANGO_SETTINGS_MODULE="dmoj.settings",PYTHONPATH="${APP_DIR}",SECRET_KEY="${SECRET_KEY}",DB_PASSWORD="${DB_PASSWORD}",CHAT_SECRET_KEY="${CHAT_SECRET_KEY}",EVENT_DAEMON_KEY="${EVENT_DAEMON_KEY}",DEBUG="${DEBUG}",SITE_DOMAIN="${SITE_DOMAIN}",BRIDGE_PORT="${BRIDGE_PORT:-9999}",WEB_PORT="${WEB_PORT:-80}"
 EOF
 
 # Bridge
 cat > /etc/supervisor/conf.d/capyjudge-bridged.conf << EOF
 [program:capyjudge-bridged]
-command=${APP_HOME}/venv/bin/python3 ${APP_DIR}/manage.py runbridged
+command=${APP_HOME}/venv/bin/python manage.py runbridged
 directory=${APP_DIR}
+stopsignal=INT
 user=${APP_USER}
-autostart=true
-autorestart=true
+group=${APP_GROUP}
 stdout_logfile=${LOG_DIR}/supervisor/bridged.log
-stdout_logfile_maxbytes=10MB
 stderr_logfile=${LOG_DIR}/supervisor/bridged_error.log
-stderr_logfile_maxbytes=10MB
-environment=DJANGO_SETTINGS_MODULE="dmoj.settings",PYTHONPATH="${APP_DIR}",SECRET_KEY="${SECRET_KEY}",DB_PASSWORD="${DB_PASSWORD}",BRIDGE_PORT="${BRIDGE_PORT:-9999}"
 EOF
 
 # Celery
 cat > /etc/supervisor/conf.d/capyjudge-celery.conf << EOF
 [program:capyjudge-celery]
-command=${APP_HOME}/venv/bin/celery -A dmoj_celery worker --concurrency=${CELERY_CONCURRENCY:-2} --loglevel=info
+command=${APP_HOME}/venv/bin/celery -A dmoj_celery worker
 directory=${APP_DIR}
 user=${APP_USER}
-autostart=true
-autorestart=true
+group=${APP_GROUP}
 stdout_logfile=${LOG_DIR}/celery/celery.log
-stdout_logfile_maxbytes=10MB
 stderr_logfile=${LOG_DIR}/celery/celery_error.log
-stderr_logfile_maxbytes=10MB
-environment=DJANGO_SETTINGS_MODULE="dmoj.settings"
 EOF
 
 # WebSocket Event Daemon
@@ -742,12 +711,9 @@ cat > /etc/supervisor/conf.d/capyjudge-wsevent.conf << EOF
 command=node ${APP_DIR}/websocket/daemon.js
 directory=${APP_DIR}
 user=${APP_USER}
-autostart=true
-autorestart=true
+group=${APP_GROUP}
 stdout_logfile=${LOG_DIR}/websocket/wsevent.log
-stdout_logfile_maxbytes=10MB
 stderr_logfile=${LOG_DIR}/websocket/wsevent_error.log
-stderr_logfile_maxbytes=10MB
 EOF
 
 log_info "Supervisor configurations created"
@@ -853,109 +819,6 @@ chmod +x "${DATA_DIR}" 2>/dev/null || true
 chmod +x "${DATA_DIR}/static" 2>/dev/null || true
 
 # ============================================
-# Create Management Scripts
-# ============================================
-
-# Status check script
-cat > /usr/local/bin/capyjudge-status << 'EOF'
-#!/bin/bash
-echo "========================================="
-echo "CapyJudge Service Status"
-echo "========================================="
-echo ""
-echo "Supervisor Services:"
-supervisorctl status
-echo ""
-echo "Nginx:"
-systemctl status nginx --no-pager | grep "Active:"
-echo ""
-echo "MariaDB:"
-systemctl status mariadb --no-pager | grep "Active:"
-echo ""
-echo "Redis:"
-systemctl status redis-server --no-pager | grep "Active:"
-echo ""
-echo "Memcached:"
-systemctl status memcached --no-pager | grep "Active:"
-echo ""
-echo "========================================="
-echo "Recent Logs (last 5 lines each)"
-echo "========================================="
-echo "--- Site ---"
-tail -5 /home/capyjudge/logs/supervisor/site.log 2>/dev/null || echo "No log yet"
-echo ""
-echo "--- Bridge ---"
-tail -5 /home/capyjudge/logs/supervisor/bridged.log 2>/dev/null || echo "No log yet"
-echo ""
-echo "--- WebSocket ---"
-tail -5 /home/capyjudge/logs/websocket/wsevent.log 2>/dev/null || echo "No log yet"
-echo ""
-echo "--- Celery ---"
-tail -5 /home/capyjudge/logs/celery/celery.log 2>/dev/null || echo "No log yet"
-EOF
-
-# Restart script
-cat > /usr/local/bin/capyjudge-restart << 'EOF'
-#!/bin/bash
-echo "Restarting CapyJudge services..."
-supervisorctl restart all
-systemctl restart nginx
-echo "Services restarted"
-echo "Run 'capyjudge-status' to check status"
-EOF
-
-# View logs script
-cat > /usr/local/bin/capyjudge-logs << 'EOF'
-#!/bin/bash
-SERVICE=$1
-if [ -z "$SERVICE" ]; then
-    echo "Usage: capyjudge-logs [site|bridge|celery|wsevent|all]"
-    echo ""
-    echo "Available services:"
-    echo "  site     - Django uWSGI logs"
-    echo "  bridge   - Judge bridge logs"
-    echo "  celery   - Celery worker logs"
-    echo "  wsevent  - WebSocket event daemon logs"
-    echo "  all      - Show all logs with multitail"
-    exit 1
-fi
-
-case $SERVICE in
-    site)
-        tail -f /home/capyjudge/logs/supervisor/site.log
-        ;;
-    bridge)
-        tail -f /home/capyjudge/logs/supervisor/bridged.log
-        ;;
-    celery)
-        tail -f /home/capyjudge/logs/celery/celery.log
-        ;;
-    wsevent)
-        tail -f /home/capyjudge/logs/websocket/wsevent.log
-        ;;
-    all)
-        if command -v multitail &> /dev/null; then
-            multitail /home/capyjudge/logs/supervisor/site.log \
-                     /home/capyjudge/logs/supervisor/bridged.log \
-                     /home/capyjudge/logs/websocket/wsevent.log
-        else
-            echo "Install multitail for combined log viewing: sudo apt install multitail"
-            echo "Showing site log only..."
-            tail -f /home/capyjudge/logs/supervisor/site.log
-        fi
-        ;;
-    *)
-        echo "Unknown service: $SERVICE"
-        exit 1
-        ;;
-esac
-EOF
-
-chmod +x /usr/local/bin/capyjudge-status
-chmod +x /usr/local/bin/capyjudge-restart
-chmod +x /usr/local/bin/capyjudge-logs
-
-# ============================================
 # Installation Complete
 # ============================================
 log_info "========================================="
@@ -974,11 +837,6 @@ log_info "WebSocket Port: ${WEBSOCKET_PORT:-15100}"
 log_info ""
 log_info "Environment file: ${ENV_FILE}"
 log_info "Secret keys saved in: ${DATA_DIR}/secrets/"
-log_info ""
-log_info "Management Commands:"
-log_info "  capyjudge-status   - Check all service statuses"
-log_info "  capyjudge-restart  - Restart all services"
-log_info "  capyjudge-logs     - View logs for specific service"
 log_info ""
 log_info "Access CapyJudge at: http://${SITE_DOMAIN:-localhost}:${WEB_PORT:-80}"
 log_info ""
