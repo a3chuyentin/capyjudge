@@ -216,7 +216,7 @@ log_info "Generating configuration values..."
 # Generate secret keys
 SECRET_KEY=$(generate_secret_key)
 EVENT_DAEMON_KEY=$(generate_random_password)
-CHAT_SECRET_KEY=$(generate_random_password)
+CHAT_SECRET_KEY=$(generate_fernet_key)
 DB_PASSWORD=$(generate_random_password)
 FERNET_KEY=$(generate_fernet_key)
 
