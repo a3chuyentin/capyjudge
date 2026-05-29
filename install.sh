@@ -60,7 +60,7 @@ sudo apt-get update -y
 # Install essential packages
 sudo apt-get install -y \
     git curl wget gnupg lsb-release ca-certificates \
-    python python-pip python-dev python-venv python-full \
+    python3 python3-pip python3-dev python3-venv python3-full \
     gcc g++ gcc-12 g++-12 make \
     libxml2-dev libxslt1-dev zlib1g-dev \
     gettext pkg-config \
@@ -179,7 +179,7 @@ sudo apt-get install -y \
     libjpeg-dev \
     libz-dev \
     build-essential \
-    python-dev \
+    python3-dev \
     pkg-config
 
 # Create virtual environment
