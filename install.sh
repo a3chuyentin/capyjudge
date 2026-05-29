@@ -82,7 +82,7 @@ log_error() {
 
 # Generates a 50-character random secret key for Django SECRET_KEY
 generate_secret_key() {
-    "${APP_HOME}/venv/bin/python3" -c "
+    sudo -u "${APP_USER}" "${APP_HOME}/venv/bin/python3" -c "
 import secrets
 import string
 chars = string.ascii_letters + string.digits + '!@#\$%^&*()-_=+[]{}|;:,.<>?'
@@ -92,12 +92,12 @@ print(''.join(secrets.choice(chars) for _ in range(50)))
 
 # Generates a Fernet encryption key for chat message encryption
 generate_fernet_key() {
-    "${APP_HOME}/venv/bin/python3" -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
+    sudo -u "${APP_USER}" "${APP_HOME}/venv/bin/python3" -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
 }
 
 # Generates a 32-character random password for database and service credentials
 generate_random_password() {
-    "${APP_HOME}/venv/bin/python3" -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
+    sudo -u "${APP_USER}" "${APP_HOME}/venv/bin/python3" -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
 }
 
 # ============================================
@@ -150,7 +150,17 @@ else
 fi
 
 # Global npm packages for SCSS and PostCSS processing
+# Fix npm global install permission issue by setting prefix
+if [ ! -d "$HOME/.npm-global" ]; then
+    mkdir -p "$HOME/.npm-global"
+    npm config set prefix "$HOME/.npm-global"
+fi
+export PATH="$HOME/.npm-global/bin:$PATH"
 npm install -g sass postcss-cli postcss autoprefixer
+# Also make these available for sudo
+sudo ln -sf "$HOME/.npm-global/bin/sass" /usr/local/bin/sass 2>/dev/null || true
+sudo ln -sf "$HOME/.npm-global/bin/postcss" /usr/local/bin/postcss 2>/dev/null || true
+sudo ln -sf "$HOME/.npm-global/bin/autoprefixer" /usr/local/bin/autoprefixer 2>/dev/null || true
 
 log_info "System dependencies installed"
 
@@ -164,18 +174,18 @@ log_info "Creating capyjudge user and group..."
 
 # Create group if it doesn't already exist
 if ! getent group "${APP_GROUP}" > /dev/null 2>&1; then
-    groupadd "${APP_GROUP}"
+    sudo groupadd "${APP_GROUP}"
     log_info "Group ${APP_GROUP} created"
 fi
 
 # Create user with home directory and assign to the application group
 if ! id "${APP_USER}" > /dev/null 2>&1; then
-    useradd -m -g "${APP_GROUP}" -s /bin/bash "${APP_USER}"
+    sudo useradd -m -g "${APP_GROUP}" -s /bin/bash "${APP_USER}"
     log_info "User ${APP_USER} created"
 fi
 
 # Add www-data (Nginx user) to the application group for socket/file access
-usermod -a -G "${APP_GROUP}" www-data
+sudo usermod -a -G "${APP_GROUP}" www-data
 
 log_info "User and group setup complete"
 
@@ -188,21 +198,21 @@ log_info "User and group setup complete"
 log_info "Creating directory structure..."
 
 # Application data directories
-mkdir -p "${DATA_DIR}"/{static,media,problems,secrets,cache,logs}
+sudo mkdir -p "${DATA_DIR}"/{static,media,problems,secrets,cache,logs}
 # Configuration directory for problem metadata
-mkdir -p "${DATA_DIR}/problems/__conf__"
+sudo mkdir -p "${DATA_DIR}/problems/__conf__"
 # Log directories for all services
-mkdir -p "${LOG_DIR}"/{nginx,supervisor,uwsgi,django,celery,websocket,redis,memcached}
+sudo mkdir -p "${LOG_DIR}"/{nginx,supervisor,uwsgi,django,celery,websocket,redis,memcached}
 # Application source directory
-mkdir -p "${APP_DIR}"
+sudo mkdir -p "${APP_DIR}"
 # Nginx runtime directories
-mkdir -p /run/nginx /var/log/nginx
+sudo mkdir -p /run/nginx /var/log/nginx
 
 # Set ownership to application user for security
-chown -R "${APP_USER}:${APP_GROUP}" "${DATA_DIR}" "${LOG_DIR}" "${APP_DIR}"
+sudo chown -R "${APP_USER}:${APP_GROUP}" "${DATA_DIR}" "${LOG_DIR}" "${APP_DIR}"
 # Nginx requires write access to its runtime directories
-chown -R www-data:www-data /var/log/nginx /run/nginx
-chmod 755 "${DATA_DIR}" "${LOG_DIR}" /run/nginx
+sudo chown -R www-data:www-data /var/log/nginx /run/nginx
+sudo chmod 755 "${DATA_DIR}" "${LOG_DIR}" /run/nginx
 
 log_info "Directory structure created"
 
@@ -286,7 +296,7 @@ log_info "Checking for .env file..."
 if [ -f "${APP_DIR}/.env" ]; then
     log_info "Found existing .env file, loading configuration..."
     # Clean up any heredoc artifacts that might have been accidentally saved
-    sed -i '/^EOF$/d' "${APP_DIR}/.env" 2>/dev/null || true
+    sudo sed -i '/^EOF$/d' "${APP_DIR}/.env" 2>/dev/null || true
     # Load environment variables into current shell session
     set -a
     source "${APP_DIR}/.env"
@@ -294,8 +304,9 @@ if [ -f "${APP_DIR}/.env" ]; then
     log_info "Loaded configuration from .env file"
 elif [ -f "${APP_DIR}/.env.example" ]; then
     log_info "No .env file found, creating from .env.example..."
-    cp "${APP_DIR}/.env.example" "${APP_DIR}/.env"
-    sed -i '/^EOF$/d' "${APP_DIR}/.env" 2>/dev/null || true
+    sudo cp "${APP_DIR}/.env.example" "${APP_DIR}/.env"
+    sudo sed -i '/^EOF$/d' "${APP_DIR}/.env" 2>/dev/null || true
+    sudo chown "${APP_USER}:${APP_GROUP}" "${APP_DIR}/.env"
     
     # Prompt user to edit the .env file for custom configuration
     echo ""
@@ -309,13 +320,13 @@ elif [ -f "${APP_DIR}/.env.example" ]; then
     if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
         # Open with available text editor
         if command -v nano &> /dev/null; then
-            nano "${APP_DIR}/.env"
+            sudo -u "${APP_USER}" nano "${APP_DIR}/.env"
         elif command -v vim &> /dev/null; then
-            vim "${APP_DIR}/.env"
+            sudo -u "${APP_USER}" vim "${APP_DIR}/.env"
         else
             log_warn "No text editor found. Please edit ${APP_DIR}/.env manually later."
         fi
-        sed -i '/^EOF$/d' "${APP_DIR}/.env" 2>/dev/null || true
+        sudo sed -i '/^EOF$/d' "${APP_DIR}/.env" 2>/dev/null || true
     else
         log_info "Skipping .env editing. You can edit it later at: ${APP_DIR}/.env"
     fi
@@ -362,8 +373,8 @@ SITE_ADMIN_EMAIL="${SITE_ADMIN_EMAIL:-admin@localhost}"
 DEBUG="${DEBUG:-False}"
 
 # Save all generated credentials to a secure file for reference
-mkdir -p "${DATA_DIR}/secrets"
-cat > "${DATA_DIR}/secrets/credentials.txt" << EOF
+sudo mkdir -p "${DATA_DIR}/secrets"
+sudo bash -c "cat > ${DATA_DIR}/secrets/credentials.txt" << EOF
 # CapyJudge Credentials
 # Generated on $(date)
 # Keep this file secure and do not share!
@@ -386,8 +397,8 @@ SITE_DOMAIN=${SITE_DOMAIN}
 EOF
 
 # Restrict access to credentials file
-chmod 600 "${DATA_DIR}/secrets/credentials.txt"
-chown "${APP_USER}:${APP_GROUP}" "${DATA_DIR}/secrets/credentials.txt"
+sudo chmod 600 "${DATA_DIR}/secrets/credentials.txt"
+sudo chown "${APP_USER}:${APP_GROUP}" "${DATA_DIR}/secrets/credentials.txt"
 
 log_info "Configuration values generated and saved"
 
@@ -401,13 +412,13 @@ log_info "Configuration values generated and saved"
 log_info "Configuring MySQL/MariaDB database..."
 
 # Start and enable the database service
-systemctl start mariadb
-systemctl enable mariadb
+sudo systemctl start mariadb
+sudo systemctl enable mariadb
 
 # Wait for database server to be ready before proceeding
 log_info "Waiting for MariaDB to be ready..."
 for i in {1..30}; do
-    if mysqladmin ping -u root --silent 2>/dev/null; then
+    if sudo mysqladmin ping -u root --silent 2>/dev/null; then
         log_info "MariaDB is ready!"
         break
     fi
@@ -417,7 +428,7 @@ done
 
 # Create the application database and user
 log_info "Creating database and user..."
-mysql -u root << EOF
+sudo mysql -u root << EOF
 CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 DROP USER IF EXISTS '${DB_USER}'@'localhost';
 CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
@@ -436,7 +447,7 @@ if mysql -u "${DB_USER}" -p"${DB_PASSWORD}" -e "SELECT 1;" "${DB_NAME}" 2>/dev/n
 else
     # Fallback: try with mysql_native_password authentication plugin
     log_warn "Trying alternative method: mysql_native_password..."
-    mysql -u root << EOF
+    sudo mysql -u root << EOF
 ALTER USER '${DB_USER}'@'localhost' IDENTIFIED WITH mysql_native_password BY '${DB_PASSWORD}';
 FLUSH PRIVILEGES;
 EOF
@@ -458,7 +469,7 @@ if command -v mysql_tzinfo_to_sql > /dev/null 2>&1 && [ -d /usr/share/zoneinfo ]
     log_info "Importing timezone data to MySQL..."
     
     # Try multiple authentication methods for timezone import
-    if mysql_tzinfo_to_sql /usr/share/zoneinfo 2>/dev/null | mysql -u root mysql 2>/dev/null; then
+    if mysql_tzinfo_to_sql /usr/share/zoneinfo 2>/dev/null | sudo mysql -u root mysql 2>/dev/null; then
         log_info "Timezone data imported successfully (root)"
         TZ_OK=true
     elif sudo mysql_tzinfo_to_sql /usr/share/zoneinfo 2>/dev/null | sudo mysql -u root mysql 2>/dev/null; then
@@ -480,7 +491,7 @@ else
 fi
 
 # Reload privilege tables to ensure all changes take effect
-mysql -u root -e "FLUSH TABLES;" mysql 2>/dev/null || true
+sudo mysql -u root -e "FLUSH TABLES;" mysql 2>/dev/null || true
 
 log_info "Database configured successfully"
 
@@ -493,10 +504,10 @@ log_info "Database configured successfully"
 log_info "Configuring Redis and Memcached..."
 
 # Start and enable both caching services
-systemctl restart redis-server
-systemctl enable redis-server
-systemctl restart memcached
-systemctl enable memcached
+sudo systemctl restart redis-server
+sudo systemctl enable redis-server
+sudo systemctl restart memcached
+sudo systemctl enable memcached
 
 log_info "Redis and Memcached configured"
 
@@ -510,7 +521,7 @@ log_info "Redis and Memcached configured"
 log_info "Generating Django local_settings.py..."
 
 # Django configuration with all required settings for production
-cat > "${APP_DIR}/dmoj/local_settings.py" << EOF
+sudo bash -c "cat > ${APP_DIR}/dmoj/local_settings.py" << EOF
 import os
 
 # SECURITY WARNING: keep the secret key used in production secret!
@@ -605,11 +616,11 @@ COMPRESS_ENABLED = False
 COMPRESS_OFFLINE = False
 EOF
 
-chown "${APP_USER}:${APP_GROUP}" "${APP_DIR}/dmoj/local_settings.py"
-chmod 640 "${APP_DIR}/dmoj/local_settings.py"
+sudo chown "${APP_USER}:${APP_GROUP}" "${APP_DIR}/dmoj/local_settings.py"
+sudo chmod 640 "${APP_DIR}/dmoj/local_settings.py"
 
 # Generate uWSGI configuration for serving Django application
-cat > "${APP_DIR}/uwsgi.ini" << EOF
+sudo bash -c "cat > ${APP_DIR}/uwsgi.ini" << EOF
 [uwsgi]
 # Socket configuration for Nginx communication
 uwsgi-socket = /tmp/dmoj-site.sock
@@ -644,7 +655,7 @@ workers = 7
 EOF
 
 # Generate WebSocket server configuration
-cat > "${APP_DIR}/websocket/config.js" << EOF
+sudo bash -c "cat > ${APP_DIR}/websocket/config.js" << EOF
 module.exports = {
     get_host: '0.0.0.0',
     get_port: ${WEBSOCKET_PORT},
@@ -668,7 +679,7 @@ log_info "Configuration files generated"
 
 log_info "Configuring Nginx..."
 
-cat > /etc/nginx/sites-available/capyjudge << EOF
+sudo bash -c "cat > /etc/nginx/sites-available/capyjudge" << EOF
 server {
     listen ${WEB_PORT};
     server_name ${SITE_DOMAIN};
@@ -741,16 +752,16 @@ server {
 EOF
 
 # Enable the site and disable the default Nginx welcome page
-ln -sf /etc/nginx/sites-available/capyjudge /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+sudo ln -sf /etc/nginx/sites-available/capyjudge /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 
 # Create directories for profile and organization images
-mkdir -p ${APP_DIR}/profile_images ${APP_DIR}/organization_images
-chown -R ${APP_USER}:${APP_GROUP} ${APP_DIR}/profile_images ${APP_DIR}/organization_images
+sudo mkdir -p ${APP_DIR}/profile_images ${APP_DIR}/organization_images
+sudo chown -R ${APP_USER}:${APP_GROUP} ${APP_DIR}/profile_images ${APP_DIR}/organization_images
 
 # Test Nginx configuration and apply
-nginx -t
-systemctl restart nginx
+sudo nginx -t
+sudo systemctl restart nginx
 
 log_info "Nginx configured successfully"
 
@@ -763,7 +774,7 @@ log_info "Nginx configured successfully"
 log_info "Configuring Supervisor..."
 
 # uWSGI application server configuration
-cat > /etc/supervisor/conf.d/capyjudge-site.conf << EOF
+sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-site.conf" << EOF
 [program:capyjudge-site]
 command=${APP_HOME}/venv/bin/uwsgi --ini ${APP_DIR}/uwsgi.ini
 directory=${APP_DIR}
@@ -775,7 +786,7 @@ stderr_logfile=${LOG_DIR}/supervisor/site_error.log
 EOF
 
 # Bridged daemon for judge communication
-cat > /etc/supervisor/conf.d/capyjudge-bridged.conf << EOF
+sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-bridged.conf" << EOF
 [program:capyjudge-bridged]
 command=${APP_HOME}/venv/bin/python manage.py runbridged
 directory=${APP_DIR}
@@ -787,7 +798,7 @@ stderr_logfile=${LOG_DIR}/supervisor/bridged_error.log
 EOF
 
 # Celery worker for asynchronous task processing
-cat > /etc/supervisor/conf.d/capyjudge-celery.conf << EOF
+sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-celery.conf" << EOF
 [program:capyjudge-celery]
 command=${APP_HOME}/venv/bin/celery -A dmoj_celery worker
 directory=${APP_DIR}
@@ -798,7 +809,7 @@ stderr_logfile=${LOG_DIR}/celery/celery_error.log
 EOF
 
 # WebSocket event daemon for real-time features
-cat > /etc/supervisor/conf.d/capyjudge-wsevent.conf << EOF
+sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-wsevent.conf" << EOF
 [program:capyjudge-wsevent]
 command=node ${APP_DIR}/websocket/daemon.js
 directory=${APP_DIR}
@@ -861,30 +872,28 @@ log_info "Django initialization complete"
 log_info "Starting all services..."
 
 # Reload systemd to recognize any new service files
-systemctl daemon-reload
+sudo systemctl daemon-reload
 
 # Start and enable database and caching services
-systemctl restart mariadb
-systemctl enable mariadb
+sudo systemctl restart mariadb
+sudo systemctl enable mariadb
 
-systemctl restart redis-server
-systemctl enable redis-server
+sudo systemctl restart redis-server
+sudo systemctl enable redis-server
 
-systemctl restart memcached
-systemctl enable memcached
+sudo systemctl restart memcached
+sudo systemctl enable memcached
 
 # Start and enable web server
-systemctl restart nginx
-systemctl enable nginx
+sudo systemctl restart nginx
+sudo systemctl enable nginx
 
 # Start and enable process manager
-systemctl restart supervisor
-systemctl enable supervisor
-
-# Reload Supervisor configurations and start all managed processes
-supervisorctl reread
-supervisorctl update
-supervisorctl start all
+sudo systemctl restart supervisor
+sudo systemctl enable supervisor# Reload Supervisor configurations and start all managed processes
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl start all
 
 log_info "All services started"
 
@@ -897,26 +906,26 @@ log_info "All services started"
 log_info "Final permissions check..."
 
 # Ensure base directories are accessible
-chmod 755 /home/capyjudge
-chmod 755 ${APP_HOME}
-chmod 755 ${DATA_DIR}
+sudo chmod 755 /home/capyjudge
+sudo chmod 755 ${APP_HOME}
+sudo chmod 755 ${DATA_DIR}
 
 # Recursively set correct ownership for all application files
-chown -R "${APP_USER}:${APP_GROUP}" "${DATA_DIR}" "${LOG_DIR}" "${APP_DIR}"
+sudo chown -R "${APP_USER}:${APP_GROUP}" "${DATA_DIR}" "${LOG_DIR}" "${APP_DIR}"
 
 # Set directory permissions to allow traversal
-find "${DATA_DIR}" -type d -exec chmod 755 {} \;
-find "${LOG_DIR}" -type d -exec chmod 755 {} \;
+sudo find "${DATA_DIR}" -type d -exec chmod 755 {} \;
+sudo find "${LOG_DIR}" -type d -exec chmod 755 {} \;
 # Set file permissions to be readable but not writable by others
-find "${DATA_DIR}/static" -type f -exec chmod 644 {} \;
-find "${DATA_DIR}/media" -type f -exec chmod 644 {} \;
-find "${LOG_DIR}" -type f -exec chmod 644 {} \;
+sudo find "${DATA_DIR}/static" -type f -exec chmod 644 {} \;
+sudo find "${DATA_DIR}/media" -type f -exec chmod 644 {} \;
+sudo find "${LOG_DIR}" -type f -exec chmod 644 {} \;
 
 # Ensure Nginx user has group access to application files
-usermod -a -G "${APP_GROUP}" www-data 2>/dev/null || true
+sudo usermod -a -G "${APP_GROUP}" www-data 2>/dev/null || true
 
 # Restart Nginx to apply any permission changes
-systemctl restart nginx
+sudo systemctl restart nginx
 
 log_info "Permissions fixed"
 
@@ -949,7 +958,7 @@ log_info "========================================="
 
 # Brief verification that services are running
 sleep 3
-if supervisorctl status | grep -q "RUNNING"; then
+if sudo supervisorctl status | grep -q "RUNNING"; then
     log_info "Services are running successfully!"
 else
     log_warn "Some services may not be running. Check with: supervisorctl status"
