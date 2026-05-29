@@ -82,7 +82,7 @@ log_error() {
 
 # Generates a 50-character random secret key for Django SECRET_KEY
 generate_secret_key() {
-    sudo -u "${APP_USER}" "${APP_HOME}/venv/bin/python3" -c "
+    sudo -u "${APP_USER}" "${PYTHON_BIN}" -c "
 import secrets
 import string
 chars = string.ascii_letters + string.digits + '!@#\$%^&*()-_=+[]{}|;:,.<>?'
@@ -92,12 +92,12 @@ print(''.join(secrets.choice(chars) for _ in range(50)))
 
 # Generates a Fernet encryption key for chat message encryption
 generate_fernet_key() {
-    sudo -u "${APP_USER}" "${APP_HOME}/venv/bin/python3" -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
+    sudo -u "${APP_USER}" "${PYTHON_BIN}" -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
 }
 
 # Generates a 32-character random password for database and service credentials
 generate_random_password() {
-    sudo -u "${APP_USER}" "${APP_HOME}/venv/bin/python3" -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
+    sudo -u "${APP_USER}" "${PYTHON_BIN}" -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
 }
 
 # ============================================
@@ -144,23 +144,38 @@ if command -v npm &> /dev/null; then
 else
     log_info "Installing Node.js and npm..."
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
-    \. "$HOME/.nvm/nvm.sh"
+    
+    # Load nvm immediately
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    
     nvm install 24
     log_info "Node.js and npm installed successfully"
 fi
 
+# Ensure nvm is loaded
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+# Resolve absolute paths for npm and node
+NPM_BIN=$(which npm)
+NODE_BIN=$(which node)
+
+log_info "Using npm: ${NPM_BIN}"
+log_info "Using node: ${NODE_BIN}"
+
 # Global npm packages for SCSS and PostCSS processing
-# Fix npm global install permission issue by setting prefix
-if [ ! -d "$HOME/.npm-global" ]; then
-    mkdir -p "$HOME/.npm-global"
-    npm config set prefix "$HOME/.npm-global"
-fi
+# Set npm prefix to user directory to avoid permission issues
+mkdir -p "$HOME/.npm-global"
+"${NPM_BIN}" config set prefix "$HOME/.npm-global"
 export PATH="$HOME/.npm-global/bin:$PATH"
-npm install -g sass postcss-cli postcss autoprefixer
-# Also make these available for sudo
-sudo ln -sf "$HOME/.npm-global/bin/sass" /usr/local/bin/sass 2>/dev/null || true
-sudo ln -sf "$HOME/.npm-global/bin/postcss" /usr/local/bin/postcss 2>/dev/null || true
-sudo ln -sf "$HOME/.npm-global/bin/autoprefixer" /usr/local/bin/autoprefixer 2>/dev/null || true
+
+"${NPM_BIN}" install -g sass postcss-cli postcss autoprefixer
+
+# Create symlinks so these tools are available system-wide
+sudo ln -sf "$HOME/.npm-global/bin/sass" /usr/local/bin/sass
+sudo ln -sf "$HOME/.npm-global/bin/postcss" /usr/local/bin/postcss
+sudo ln -sf "$HOME/.npm-global/bin/autoprefixer" /usr/local/bin/autoprefixer
 
 log_info "System dependencies installed"
 
@@ -262,24 +277,30 @@ if [ ! -d "${APP_HOME}/venv" ]; then
     log_info "Virtual environment created"
 fi
 
+# Resolve Python binary path in venv
+PYTHON_BIN="${APP_HOME}/venv/bin/python3"
+PIP_BIN="${APP_HOME}/venv/bin/pip"
+UWSGI_BIN="${APP_HOME}/venv/bin/uwsgi"
+CELERY_BIN="${APP_HOME}/venv/bin/celery"
+
 # Install Python dependencies as the application user
 sudo -u "${APP_USER}" bash << EOF
 source ${APP_HOME}/venv/bin/activate
 # Upgrade core packaging tools
-pip install --upgrade pip setuptools wheel
+${PIP_BIN} install --upgrade pip setuptools wheel
 # Install project requirements
 if [ -f "${APP_DIR}/requirements.txt" ]; then
-    pip install -r "${APP_DIR}/requirements.txt"
+    ${PIP_BIN} install -r "${APP_DIR}/requirements.txt"
 fi
 # Install additional production deployment packages
-pip install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages
+${PIP_BIN} install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages
 # Set up pre-commit hooks for code quality (optional, for development)
 pre-commit install
 EOF
 
 # Install Node.js dependencies for the WebSocket server
 cd "${APP_DIR}/websocket"
-sudo -u "${APP_USER}" npm install express socket.io qu ws simplesets
+sudo -u "${APP_USER}" "${NPM_BIN}" install express socket.io qu ws simplesets
 cd "${APP_DIR}"
 
 log_info "All dependencies installed"
@@ -773,10 +794,16 @@ log_info "Nginx configured successfully"
 
 log_info "Configuring Supervisor..."
 
+# Resolve absolute paths for binaries used in supervisor configs
+UWSGI_BIN="${APP_HOME}/venv/bin/uwsgi"
+CELERY_BIN="${APP_HOME}/venv/bin/celery"
+MANAGE_PY="${APP_DIR}/manage.py"
+DAEMON_JS="${APP_DIR}/websocket/daemon.js"
+
 # uWSGI application server configuration
 sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-site.conf" << EOF
 [program:capyjudge-site]
-command=${APP_HOME}/venv/bin/uwsgi --ini ${APP_DIR}/uwsgi.ini
+command=${UWSGI_BIN} --ini ${APP_DIR}/uwsgi.ini
 directory=${APP_DIR}
 user=${APP_USER}
 group=${APP_GROUP}
@@ -788,7 +815,7 @@ EOF
 # Bridged daemon for judge communication
 sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-bridged.conf" << EOF
 [program:capyjudge-bridged]
-command=${APP_HOME}/venv/bin/python manage.py runbridged
+command=${PYTHON_BIN} ${MANAGE_PY} runbridged
 directory=${APP_DIR}
 stopsignal=INT
 user=${APP_USER}
@@ -800,7 +827,7 @@ EOF
 # Celery worker for asynchronous task processing
 sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-celery.conf" << EOF
 [program:capyjudge-celery]
-command=${APP_HOME}/venv/bin/celery -A dmoj_celery worker
+command=${CELERY_BIN} -A dmoj_celery worker
 directory=${APP_DIR}
 user=${APP_USER}
 group=${APP_GROUP}
@@ -811,7 +838,7 @@ EOF
 # WebSocket event daemon for real-time features
 sudo bash -c "cat > /etc/supervisor/conf.d/capyjudge-wsevent.conf" << EOF
 [program:capyjudge-wsevent]
-command=node ${APP_DIR}/websocket/daemon.js
+command=${NODE_BIN} ${DAEMON_JS}
 directory=${APP_DIR}
 user=${APP_USER}
 group=${APP_GROUP}
@@ -845,19 +872,18 @@ if [ -f "./make_style.sh" ]; then
 fi
 
 # Collect all static files to the STATIC_ROOT directory
-python3 manage.py collectstatic --noinput 2>/dev/null || true
+${PYTHON_BIN} manage.py collectstatic --noinput 2>/dev/null || true
 
 # Compile translation message catalogs
-python3 manage.py compilemessages 2>/dev/null || true
-python3 manage.py compilejsi18n 2>/dev/null || true
+${PYTHON_BIN} manage.py compilemessages 2>/dev/null || true
+${PYTHON_BIN} manage.py compilejsi18n 2>/dev/null || true
 
-# Apply all pending database migrations
-python3 manage.py migrate --noinput
+# Apply all pending database migrations${PYTHON_BIN} manage.py migrate --noinput
 
 # Load initial data fixtures for site functionality
-python3 manage.py loaddata navbar 2>/dev/null || true
-python3 manage.py loaddata language_small 2>/dev/null || python3 manage.py loaddata language 2>/dev/null || true
-python3 manage.py loaddata demo 2>/dev/null || true
+${PYTHON_BIN} manage.py loaddata navbar 2>/dev/null || true
+${PYTHON_BIN} manage.py loaddata language_small 2>/dev/null || ${PYTHON_BIN} manage.py loaddata language 2>/dev/null || true
+${PYTHON_BIN} manage.py loaddata demo 2>/dev/null || true
 
 EOF
 
@@ -890,7 +916,9 @@ sudo systemctl enable nginx
 
 # Start and enable process manager
 sudo systemctl restart supervisor
-sudo systemctl enable supervisor# Reload Supervisor configurations and start all managed processes
+sudo systemctl enable supervisor
+
+# Reload Supervisor configurations and start all managed processes
 sudo supervisorctl reread
 sudo supervisorctl update
 sudo supervisorctl start all
@@ -951,7 +979,7 @@ log_info ""
 log_info "  sudo -u ${APP_USER} bash"
 log_info "  source ${APP_HOME}/venv/bin/activate"
 log_info "  cd ${APP_DIR}"
-log_info "  python3 manage.py createsuperuser"
+log_info "  ${PYTHON_BIN} manage.py createsuperuser"
 log_info ""
 log_info "Then enter your desired username, email, and password."
 log_info "========================================="
