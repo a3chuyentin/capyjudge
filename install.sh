@@ -38,15 +38,15 @@ log_error() {
 # Helper functions (use pure Python, no Django)
 # ============================================
 generate_secret_key() {
-    python3 -c "import secrets; import string; chars = string.ascii_letters + string.digits + string.punctuation; print(''.join(secrets.choice(chars) for _ in range(50)))"
+    python -c "import secrets; import string; chars = string.ascii_letters + string.digits + string.punctuation; print(''.join(secrets.choice(chars) for _ in range(50)))"
 }
 
 generate_fernet_key() {
-    python3 -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
+    python -c "from cryptography.fernet import Fernet; key = Fernet.generate_key(); print(key.decode('utf-8'))"
 }
 
 generate_random_password() {
-    python3 -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
+    python -c "import secrets; import string; chars = string.ascii_letters + string.digits; print(''.join(secrets.choice(chars) for _ in range(32)))"
 }
 
 # ============================================
@@ -60,7 +60,7 @@ sudo apt-get update -y
 # Install essential packages
 sudo apt-get install -y \
     git curl wget gnupg lsb-release ca-certificates \
-    python3 python3-pip python3-dev python3-venv python3-full \
+    python python-pip python-dev python-venv python-full \
     gcc g++ gcc-12 g++-12 make \
     libxml2-dev libxslt1-dev zlib1g-dev \
     gettext pkg-config \
@@ -179,12 +179,12 @@ sudo apt-get install -y \
     libjpeg-dev \
     libz-dev \
     build-essential \
-    python3-dev \
+    python-dev \
     pkg-config
 
 # Create virtual environment
 if [ ! -d "${APP_HOME}/venv" ]; then
-    sudo -u "${APP_USER}" python3 -m venv "${APP_HOME}/venv"
+    sudo -u "${APP_USER}" python -m venv "${APP_HOME}/venv"
     log_info "Virtual environment created"
 fi
 
@@ -198,6 +198,8 @@ fi
 pip install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages cryptography
 pre-commit install
 EOF
+
+source "${APP_HOME}"/venv/bin/activate
 
 # Install Node dependencies for websocket
 cd "${APP_DIR}/websocket"
@@ -652,24 +654,24 @@ if [ -f "./make_style.sh" ]; then
 fi
 
 # Collect static files
-python3 manage.py collectstatic --noinput 2>/dev/null || true
+python manage.py collectstatic --noinput 2>/dev/null || true
 
 # Compile translations
-python3 manage.py compilemessages 2>/dev/null || true
-python3 manage.py compilejsi18n 2>/dev/null || true
+python manage.py compilemessages 2>/dev/null || true
+python manage.py compilejsi18n 2>/dev/null || true
 
 # Run migrations
-python3 manage.py migrate --noinput
+python manage.py migrate --noinput
 
 # Load initial data (using correct fixture names from LQDOJ)
-python3 manage.py loaddata navbar 2>/dev/null || true
-python3 manage.py loaddata language_small 2>/dev/null || python3 manage.py loaddata language 2>/dev/null || true
-python3 manage.py loaddata demo 2>/dev/null || true
+python manage.py loaddata navbar 2>/dev/null || true
+python manage.py loaddata language_small 2>/dev/null || python manage.py loaddata language 2>/dev/null || true
+python manage.py loaddata demo 2>/dev/null || true
 
 # Create superuser if credentials provided
 if [ ! -z "${DJANGO_SUPERUSER_USERNAME}" ] && [ ! -z "${DJANGO_SUPERUSER_PASSWORD}" ]; then
     echo "Creating superuser from environment..."
-    python3 manage.py createsuperuser --noinput \
+    python manage.py createsuperuser --noinput \
         --username "${DJANGO_SUPERUSER_USERNAME}" \
         --email "${DJANGO_SUPERUSER_EMAIL}" 2>/dev/null || true
 fi
