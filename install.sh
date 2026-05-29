@@ -195,7 +195,7 @@ pip install --upgrade pip setuptools wheel
 if [ -f "${APP_DIR}/requirements.txt" ]; then
     pip install -r "${APP_DIR}/requirements.txt"
 fi
-pip install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages
+pip install mysqlclient uwsgi websocket-client celery redis django-compressor cryptography boto3 django-storages cryptography
 pre-commit install
 EOF
 
