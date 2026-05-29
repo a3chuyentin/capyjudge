@@ -63,94 +63,7 @@ load_env_file() {
 
 create_env_file() {
     log_info "Creating new .env file from template"
-    
-    # Generate random passwords if not set
-    DB_PASSWORD="${DB_PASSWORD:-$(generate_random_password)}"
-    DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-$(generate_random_password)}"
-    SECRET_KEY="${SECRET_KEY:-$(generate_secret_key)}"
-    CHAT_SECRET_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-    EVENT_DAEMON_KEY="${EVENT_DAEMON_KEY:-$(generate_random_password)}"
-    
-    # Save secrets to files for persistence
-    mkdir -p "${DATA_DIR}/secrets"
-    echo "$SECRET_KEY" > "${DATA_DIR}/secrets/SECRET_KEY"
-    echo "$CHAT_SECRET_KEY" > "${DATA_DIR}/secrets/CHAT_SECRET_KEY"
-    echo "$EVENT_DAEMON_KEY" > "${DATA_DIR}/secrets/EVENT_DAEMON_KEY"
-    echo "$DB_PASSWORD" > "${DATA_DIR}/secrets/DB_PASSWORD"
-    
-    cat > "$ENV_FILE" << 'ENVEOF'
-# ============================================
-# Ports configuration
-# ============================================
-WEB_PORT=80
-BRIDGE_PORT=9999
-WEBSOCKET_PORT=15100
-
-# ============================================
-# Database (required)
-# ============================================
-DB_NAME=capyjudge
-DB_USER=capyjudge
-DB_PASSWORD=CHANGE_ME
-DB_HOST=localhost
-DB_PORT=3306
-DB_ROOT_PASSWORD=CHANGE_ME
-
-# ============================================
-# Django
-# ============================================
-DEBUG=False
-SITE_DOMAIN=localhost
-SITE_NAME=CapyJudge
-SITE_LONG_NAME=CapyJudge Online Judge
-SITE_ADMIN_EMAIL=admin@capyjudge.com
-
-# ============================================
-# Superuser (optional - auto create)
-# ============================================
-DJANGO_SUPERUSER_USERNAME=admin
-DJANGO_SUPERUSER_PASSWORD=admin123
-DJANGO_SUPERUSER_EMAIL=capyjudge@gmail.com
-
-# ============================================
-# Redis & Cache
-# ============================================
-REDIS_URL=redis://localhost:6379/0
-MEMCACHED_URL=127.0.0.1:11211
-
-# ============================================
-# Judge (optional)
-# ============================================
-JUDGE_NAME=judge-0
-CELERY_CONCURRENCY=2
-
-# ============================================
-# Security Keys (auto-generated)
-# ============================================
-ENVEOF
-
-    # Append keys without using EOF with variable substitution
-    echo "SECRET_KEY=${SECRET_KEY}" >> "$ENV_FILE"
-    echo "CHAT_SECRET_KEY=${CHAT_SECRET_KEY}" >> "$ENV_FILE"
-    echo "EVENT_DAEMON_KEY=${EVENT_DAEMON_KEY}" >> "$ENV_FILE"
-    
-    cat >> "$ENV_FILE" << 'ENVEOF'
-
-# ============================================
-# Event Daemon
-# ============================================
-EVENT_DAEMON_URL=http://localhost:15100
-EVENT_DAEMON_PUBLIC_URL=http://localhost:15100
-
-# ============================================
-# Organization Subdomain (optional)
-# ============================================
-# USE_SUBDOMAIN=False
-ENVEOF
-
-    chown "${APP_USER}:${APP_GROUP}" "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-    log_info ".env file created at $ENV_FILE"
+    cp "${ENV_EXAMPLE}" "${ENV_FILE}"
 }
 
 # ============================================
@@ -301,50 +214,6 @@ log_info "All dependencies installed"
 # ============================================
 log_info "Checking for .env file..."
 
-# Create .env.example if not exists
-if [ ! -f "${ENV_EXAMPLE}" ]; then
-    log_warn ".env.example not found, creating default template"
-    cat > "${ENV_EXAMPLE}" << 'EOF'
-# CapyJudge Environment Configuration Example
-# Copy this file to .env and modify as needed
-
-# Ports
-WEB_PORT=80
-BRIDGE_PORT=9999
-WEBSOCKET_PORT=15100
-
-# Database
-DB_NAME=capyjudge
-DB_USER=capyjudge
-DB_PASSWORD=your_strong_password
-DB_HOST=localhost
-DB_PORT=3306
-
-# Django
-DEBUG=False
-SITE_DOMAIN=localhost
-SITE_NAME=CapyJudge
-
-# Security (Django will generate these automatically)
-SECRET_KEY=your-secret-key-here
-CHAT_SECRET_KEY=your-fernet-key-here
-EVENT_DAEMON_KEY=your-event-key-here
-
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# Memcached
-MEMCACHED_URL=127.0.0.1:11211
-
-# Superuser
-DJANGO_SUPERUSER_USERNAME=admin
-DJANGO_SUPERUSER_PASSWORD=admin123
-DJANGO_SUPERUSER_EMAIL=admin@capyjudge.com
-EOF
-    chown "${APP_USER}:${APP_GROUP}" "${ENV_EXAMPLE}"
-fi
-
-# Load existing .env or create new one (now Django is available for key generation)
 if load_env_file; then
     log_info "Using existing .env configuration"
 else
