@@ -80,12 +80,23 @@ sudo apt-get install -y \
     libpq-dev \
 	unzip 
 
-# Download and install nvm:
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
-# in lieu of restarting the shell
-\. "$HOME/.nvm/nvm.sh"
-# Download and install Node.js:
-nvm install 24
+# Check if npm is already installed
+if command -v npm &> /dev/null; then
+    NPM_VERSION=$(npm --version)
+    NODE_VERSION=$(node --version)
+    log_info "npm ${NPM_VERSION} (Node.js ${NODE_VERSION}) already installed, skipping installation"
+else
+    log_info "Installing Node.js and npm..."
+    
+    # Download and install nvm:
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
+    # in lieu of restarting the shell
+    \. "$HOME/.nvm/nvm.sh"
+    # Download and install Node.js:
+    nvm install 24
+    
+    log_info "Node.js and npm installed successfully"
+fi
 
 # Install Node.js global tools
 npm install -g sass postcss-cli postcss autoprefixer
