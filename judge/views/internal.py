@@ -944,16 +944,38 @@ def problem_tag(request):
 class RequestTimeMixin(object):
     def get_requests_data(self):
         logger = logging.getLogger(self.log_name)
-        log_filename = logger.handlers[0].baseFilename
+        log_filename = None
+        
+        # Safely get log filename from handlers
+        if logger.handlers:
+            for handler in logger.handlers:
+                if hasattr(handler, 'baseFilename'):
+                    log_filename = handler.baseFilename
+                    break
+        
+        if not log_filename:
+            # Fallback to default log location
+            import os
+            log_dir = getattr(settings, 'LOG_DIR', '/tmp')
+            log_filename = os.path.join(log_dir, f'{self.log_name}.log')
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(log_filename), exist_ok=True)
+        
         requests = []
 
-        with open(log_filename, "r") as f:
-            for line in f:
-                try:
-                    info = json.loads(line)
-                    requests.append(info)
-                except:
-                    continue
+        try:
+            with open(log_filename, "r") as f:
+                for line in f:
+                    try:
+                        info = json.loads(line)
+                        requests.append(info)
+                    except:
+                        continue
+        except FileNotFoundError:
+            logger.warning(f"Log file not found: {log_filename}")
+        except Exception as e:
+            logger.error(f"Error reading log file {log_filename}: {e}")
+            
         return requests
 
 
