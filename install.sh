@@ -558,7 +558,6 @@ server {
         alias ${DATA_DIR}/static/icons/favicon.ico;
         expires 30d;
         add_header Cache-Control "public, immutable";
-        try_files \$uri =404;
     }
     
     location = /logo.png {
@@ -578,25 +577,28 @@ server {
         add_header Cache-Control "public";
     }
     
-    # Static & media files
-    location /static {
-        alias ${DATA_DIR}/static;
+    # Static files
+    location /static/ {
+        alias ${DATA_DIR}/static/;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
     
-    location /media {
-        alias ${DATA_DIR}/media;
+    # Media files
+    location /media/ {
+        alias ${DATA_DIR}/media/;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
     
+    # Profile images
     location /profile_images/ {
         alias ${APP_DIR}/profile_images/;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
     
+    # Organization images
     location /organization_images/ {
         alias ${APP_DIR}/organization_images/;
         expires 30d;
