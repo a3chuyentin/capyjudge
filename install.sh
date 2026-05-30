@@ -450,6 +450,8 @@ SECURE_SSL_REDIRECT = True
 # Compression (disabled during setup)
 COMPRESS_ENABLED = False
 COMPRESS_OFFLINE = False
+
+SEND_ACTIVATION_EMAIL = True
 EOF
 
 sudo chown "${APP_USER}:${APP_GROUP}" "${APP_DIR}/dmoj/local_settings.py"
