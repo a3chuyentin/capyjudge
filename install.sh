@@ -351,6 +351,27 @@ log_info "Cache services configured"
 # ============================================
 log_info "Generating Django configuration..."
 
+# Build email config conditionally
+EMAIL_CONFIG=""
+if [ -n "${EMAIL_HOST}" ] && [ -n "${EMAIL_HOST_USER}" ] && [ -n "${EMAIL_HOST_PASSWORD}" ]; then
+    EMAIL_CONFIG=$(cat << EOF
+
+# Email configuration
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = '${EMAIL_HOST}'
+EMAIL_PORT = ${EMAIL_PORT:-587}
+EMAIL_USE_TLS = ${EMAIL_USE_TLS:-True}
+EMAIL_HOST_USER = '${EMAIL_HOST_USER}'
+EMAIL_HOST_PASSWORD = '${EMAIL_HOST_PASSWORD}'
+DEFAULT_FROM_EMAIL = '${DEFAULT_FROM_EMAIL:-${SITE_NAME} <noreply@${SITE_DOMAIN}>}'
+SERVER_EMAIL = '${SERVER_EMAIL:-${SITE_NAME} <noreply@${SITE_DOMAIN}>}'
+EOF
+)
+    log_info "Email configuration enabled"
+else
+    log_warn "Email not configured - skipping email backend setup"
+fi
+
 sudo bash -c "cat > ${APP_DIR}/dmoj/local_settings.py" << EOF
 import os
 
@@ -447,15 +468,19 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 SECURE_SSL_REDIRECT = True
 
+# Registration
+SEND_ACTIVATION_EMAIL = True
+${EMAIL_CONFIG}
+
 # Compression (disabled during setup)
 COMPRESS_ENABLED = False
 COMPRESS_OFFLINE = False
-
-SEND_ACTIVATION_EMAIL = True
 EOF
 
 sudo chown "${APP_USER}:${APP_GROUP}" "${APP_DIR}/dmoj/local_settings.py"
 sudo chmod 640 "${APP_DIR}/dmoj/local_settings.py"
+
+log_info "Django configuration generated"
 
 # ============================================
 # Step 12: uWSGI Configuration
