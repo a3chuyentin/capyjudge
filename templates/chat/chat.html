@@ -4,8 +4,9 @@
 {% block title_ruler %}{% endblock %}
 {% block title %} {{_('Chat Box')}} {% endblock %}
 
+{% include "event-load.html" %}
+
 {% block js_media %}
-  {% include "event-load.html" %}
   <script type="module" src="https://unpkg.com/emoji-picker-element@1"></script>
 
   <script type="text/javascript">

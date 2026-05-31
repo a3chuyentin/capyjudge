@@ -1,5 +1,7 @@
 {% extends "user/base-users-two-col.html" %}
 
+{% include "event-load.html" %}
+
 {% block left_sidebar %}
   {% include "contest/contest-tabs.html" %}
 {% endblock %}
@@ -125,7 +127,6 @@
   {% endif %}
   {% include "contest/media-js.html" %}
   {% if last_msg and EVENT_DAEMON_LOCATION %}
-    {% include "event-load.html" %}
     <script type="text/javascript">
       $(function () {
         var _updateTimer = null;

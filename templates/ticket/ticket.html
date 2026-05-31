@@ -40,9 +40,10 @@
   </style>
 {% endblock %}
 
+{% include "event-load.html" %}
+
 {% block js_media %}
   {{ form.media.js }}
-  {% include "event-load.html" %}
   <script type="text/javascript">
     $(function () {
       var $h2 = $('#content').find('> h2:first-child');

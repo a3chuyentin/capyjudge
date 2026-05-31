@@ -2,6 +2,8 @@
 
 {% set has_hidden_subtasks = contest is defined and contest and contest.format.has_hidden_subtasks %}
 
+{% include "event-load.html" %}
+
 {% block js_media %}
   <script type="text/javascript">
     {% if dynamic_update and last_msg %}
@@ -29,7 +31,6 @@
   </script>
 
   {% compress js %}
-    {% include "event-load.html" %}
     {% if request.user.is_authenticated and perms.judge.rejudge_submission %}
       <script type="text/javascript">
         window.rejudge_submission = function (id, e) {

@@ -89,13 +89,15 @@
   </style>
 {% endblock %}
 
+{% include "event-load.html" %}
+
 {% block js_media %}
   <script type="text/javascript">
     window.filter_user_ids = {{filter_status.user_id}};
     window.filter_own_id = {{filter_status.own_id}};
     window.filter_assignee_ids = {{filter_status.assignee_id}};
   </script>
-  {% include "event-load.html" %}
+  
   <script type="text/javascript">
     $(function () {
       $('input#own').click(function () {

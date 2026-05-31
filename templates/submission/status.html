@@ -67,8 +67,8 @@
     }
   </style>
 {% endblock %}
+{% include "event-load.html" %}
 {% block content_js_media %}
-  {% include "event-load.html" %}
   <script type="text/javascript">
     function setup_icons() {
       $(".case-icons i").each(function() {
